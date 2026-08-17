@@ -5,6 +5,24 @@ import re
 import shutil
 import uuid
 from pathlib import Path
+import asyncio
+import edge_tts
+import pyttsx3
+from pathlib import Path
+
+def generate_loquendo_speech(text, voice_id, rate, output_file):
+    engine = pyttsx3.init()
+    
+    # Selecciona la voz de Loquendo
+    engine.setProperty('voice', voice_id)
+    
+    # Ajusta la velocidad (Por defecto suele ser 200)
+    engine.setProperty('rate', rate)
+    
+    # Guarda el resultado en un archivo de audio WAV
+    engine.save_to_file(text, str(output_file))
+    engine.runAndWait()
+
 
 st.set_page_config(page_title="Lip-Sync Video Generator", layout="wide")
 
@@ -29,6 +47,18 @@ OUTPUT_DIR = BASE_DIR / "output"
 TEMP_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+
+VOICES = {
+    "Español (España) - Álvaro (Masculino)": "es-ES-AlvaroNeural",
+    "Español (España) - Elvira (Femenino)": "es-ES-ElviraNeural",
+    "Español (México) - Jorge (Masculino)": "es-MX-JorgeNeural",
+    "Español (México) - Dalia (Femenino)": "es-MX-DaliaNeural",
+    "Español (Colombia) - Gonzalo (Masculino)": "es-CO-GonzaloNeural",
+    "Español (Colombia) - Salome (Femenino)": "es-CO-SalomeNeural",
+}
+
+
+
 RES_MAP = {
     "720p HD (1280x720)": (1280, 720),
     "1080p Full HD (1920x1080)": (1920, 1080),
@@ -41,6 +71,11 @@ ASPECT_MAP = {
     "1:1 (Cuadrado)": (1, 1),
 }
 CRF_MAP = {"Máxima (CRF 18)": 18, "Alta (CRF 23)": 23, "Estándar (CRF 28)": 28}
+
+
+async def generate_speech(text, voice, rate_str, pitch_str, output_file):
+    communicate = edge_tts.Communicate(text, voice, rate=rate_str, pitch=pitch_str)
+    await communicate.save(output_file)
 
 
 def run(cmd, cwd=None):
@@ -129,10 +164,44 @@ def target_dims(res_label, aspect_label):
 st.title("Generador de Video Lip-Sync (PNGtuber)")
 st.caption("Genera video sincronizado a partir de audio y dos imágenes de estado.")
 
+
+st.subheader("0. Generador de Voz (Texto a Voz / TTS)")
+text_file = st.file_uploader("Cargar guion (.txt)", type=["txt"])
+default_text = text_file.read().decode("utf-8") if text_file else ""
+user_text = st.text_area("Texto a sintetizar:", value=default_text, height=120)
+
+tc1, tc2, tc3 = st.columns(3)
+with tc1:
+    selected_voice_label = st.selectbox("Voz", list(VOICES.keys()))
+with tc2:
+    speed = st.slider("Velocidad (%)", -50, 50, 0, step=5)
+with tc3:
+    pitch = st.slider("Tono (Hz)", -50, 50, 0, step=5)
+
+if st.button("Generar Audio de Voz", use_container_width=True):
+    if user_text.strip():
+        tts_work = TEMP_DIR / f"tts_{uuid.uuid4().hex[:6]}.mp3"
+        rate_str = f"{'+' if speed >= 0 else ''}{speed}%"
+        pitch_str = f"{'+' if pitch >= 0 else ''}{pitch}Hz"
+        
+        with st.spinner("Generando audio..."):
+            asyncio.run(generate_speech(user_text, VOICES[selected_voice_label], rate_str, pitch_str, str(tts_work)))
+            
+        st.session_state["generated_audio_bytes"] = tts_work.read_bytes()
+        st.success("Audio generado.")
+
+if "generated_audio_bytes" in st.session_state:
+    st.audio(st.session_state["generated_audio_bytes"], format="audio/mp3")
+    st.download_button("Descargar MP3", st.session_state["generated_audio_bytes"], "narracion.mp3", "audio/mp3")
+
+st.markdown("---")
+
+
 st.subheader("1. Archivos")
 col1, col2, col3 = st.columns(3)
 with col1:
-    audio_file = st.file_uploader("Audio", type=["mp3", "wav", "m4a"])
+    audio_file = st.file_uploader("Audio (opcional si generaste voz arriba)", type=["mp3", "wav", "m4a"])
+    use_gen_audio = st.checkbox("Usar audio generado en la Sección 0", value=True) if "generated_audio_bytes" in st.session_state else False
 with col2:
     talking_file = st.file_uploader("Imagen — Hablando", type=["png", "jpg", "jpeg"])
 with col3:
@@ -171,16 +240,21 @@ status = st.empty()
 result_slot = st.empty()
 
 if generate:
-    if not (audio_file and talking_file and silent_file):
-        st.error("Sube el audio y las dos imágenes antes de continuar.")
+    has_audio = (use_gen_audio and "generated_audio_bytes" in st.session_state) or (audio_file is not None)
+    if not (has_audio and talking_file and silent_file):
+        st.error("Asegúrate de contar con un audio (generado o subido) y ambas imágenes.")
     else:
         session_id = uuid.uuid4().hex[:8]
         work_dir = TEMP_DIR / session_id
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
             status.info("Guardando archivos...")
-            audio_path = work_dir / f"audio{Path(audio_file.name).suffix}"
-            audio_path.write_bytes(audio_file.getbuffer())
+            if use_gen_audio and "generated_audio_bytes" in st.session_state:
+                audio_path = work_dir / "audio.mp3"
+                audio_path.write_bytes(st.session_state["generated_audio_bytes"])
+            else:
+                audio_path = work_dir / f"audio{Path(audio_file.name).suffix}"
+                audio_path.write_bytes(audio_file.getbuffer())
             talking_src = work_dir / f"talking_src{Path(talking_file.name).suffix}"
             talking_src.write_bytes(talking_file.getbuffer())
             silent_src = work_dir / f"silent_src{Path(silent_file.name).suffix}"
