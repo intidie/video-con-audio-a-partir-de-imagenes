@@ -1,14 +1,10 @@
+.venv/
 temp/
 output/
 __pycache__/
+filelist.txt
 *.mp4
 *.mp3
 *.wav
 *.png
 *.jpg
-filelist.txt
-.venv/
-temp/
-output/
-__pycache__/
-*.mp4
