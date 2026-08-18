@@ -8,6 +8,7 @@ from pathlib import Path
 import asyncio
 import edge_tts
 import pyttsx3
+import random
 from pathlib import Path
 
 def generate_loquendo_speech(text, voice_id, rate, output_file):
@@ -122,14 +123,27 @@ def preprocess_image(src, dst, width, height):
     run(["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-frames:v", "1", str(dst)])
 
 
-def build_filelist(segments, talking_img, silent_img, filelist_path):
-    lines = []
+def build_filelist(segments, talking_imgs, silent_imgs, filelist_path, frame_rate=0.18):
+    # Cabecera obligatoria: sin ella ffmpeg no trata el script como
+    # "ffconcat" extendido y el directive "duration" se ignora salvo
+    # en el primer/último bloque (causa del bug reportado).
+    lines = ["ffconcat version 1.0"]
     for start, end, label in segments:
-        img = talking_img if label == "talking" else silent_img
-        lines.append(f"file '{img.name}'")
-        lines.append(f"duration {round(end - start, 3)}")
-    last_img = talking_img if segments[-1][2] == "talking" else silent_img
-    lines.append(f"file '{last_img.name}'")
+        duration = end - start
+        pool = talking_imgs if label == "talking" else silent_imgs
+        if not pool:
+            continue
+        current = 0.0
+        while current < duration - 1e-6:
+            step = min(frame_rate, duration - current)
+            img = random.choice(pool)
+            lines.append(f"file '{img.name}'")
+            lines.append(f"duration {round(step, 3)}")
+            current += step
+
+    last_pool = talking_imgs if segments[-1][2] == "talking" else silent_imgs
+    if last_pool:
+        lines.append(f"file '{random.choice(last_pool).name}'")
     filelist_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -138,7 +152,7 @@ def render_video(filelist_name, audio_name, out_name, fps, crf, work_dir):
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", filelist_name,
         "-i", audio_name,
-        "-r", str(fps),
+        "-r", str(fps), "-fps_mode", "cfr",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", str(crf),
         "-c:a", "aac", "-b:a", "192k",
         "-shortest", out_name,
@@ -203,9 +217,10 @@ with col1:
     audio_file = st.file_uploader("Audio (opcional si generaste voz arriba)", type=["mp3", "wav", "m4a"])
     use_gen_audio = st.checkbox("Usar audio generado en la Sección 0", value=True) if "generated_audio_bytes" in st.session_state else False
 with col2:
-    talking_file = st.file_uploader("Imagen — Hablando", type=["png", "jpg", "jpeg"])
+    talking_files = st.file_uploader("Imágenes — Hablando", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 with col3:
-    silent_file = st.file_uploader("Imagen — Silencio", type=["png", "jpg", "jpeg"])
+    silent_files = st.file_uploader("Imágenes — Silencio", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+
 
 st.subheader("2. Detección de Audio")
 c1, c2 = st.columns(2)
@@ -241,7 +256,7 @@ result_slot = st.empty()
 
 if generate:
     has_audio = (use_gen_audio and "generated_audio_bytes" in st.session_state) or (audio_file is not None)
-    if not (has_audio and talking_file and silent_file):
+    if not (has_audio and talking_files and silent_files):
         st.error("Asegúrate de contar con un audio (generado o subido) y ambas imágenes.")
     else:
         session_id = uuid.uuid4().hex[:8]
@@ -255,10 +270,16 @@ if generate:
             else:
                 audio_path = work_dir / f"audio{Path(audio_file.name).suffix}"
                 audio_path.write_bytes(audio_file.getbuffer())
-            talking_src = work_dir / f"talking_src{Path(talking_file.name).suffix}"
-            talking_src.write_bytes(talking_file.getbuffer())
-            silent_src = work_dir / f"silent_src{Path(silent_file.name).suffix}"
-            silent_src.write_bytes(silent_file.getbuffer())
+            talking_srcs = []
+            for talking_file in talking_files:
+                talking_src = work_dir / f"talking_src{Path(talking_file.name).suffix}"
+                talking_src.write_bytes(talking_file.getbuffer())
+                talking_srcs.append(talking_src)
+            silent_srcs = []
+            for silent_file in silent_files:
+                silent_src = work_dir / f"silent_src{Path(silent_file.name).suffix}"
+                silent_src.write_bytes(silent_file.getbuffer())
+                silent_srcs.append(silent_src)
 
             width, height = target_dims(res_label, aspect_label)
 
@@ -268,14 +289,21 @@ if generate:
             segments = build_intervals(duration, silences)
 
             status.info("Procesando imágenes...")
-            talking_img = work_dir / "talking.png"
-            silent_img = work_dir / "silent.png"
-            preprocess_image(talking_src, talking_img, width, height)
-            preprocess_image(silent_src, silent_img, width, height)
+            talking_imgs = []
+            for talking_src in talking_srcs:
+                talking_img = work_dir / f"talking_{uuid.uuid4().hex[:8]}.png"
+                preprocess_image(talking_src, talking_img, width, height)
+                talking_imgs.append(talking_img)
+
+            silent_imgs = []
+            for silent_src in silent_srcs:
+                silent_img = work_dir / f"silent_{uuid.uuid4().hex[:8]}.png"
+                preprocess_image(silent_src, silent_img, width, height)
+                silent_imgs.append(silent_img)
 
             status.info("Construyendo lista de segmentos...")
             filelist_path = work_dir / "filelist.txt"
-            build_filelist(segments, talking_img, silent_img, filelist_path)
+            build_filelist(segments, talking_imgs, silent_imgs, filelist_path)
 
             status.info("Renderizando video con FFmpeg...")
             out_name = f"output_{session_id}.mp4"
