@@ -9,6 +9,7 @@ import asyncio
 import edge_tts
 import pyttsx3
 import random
+import itertools
 from pathlib import Path
 
 def generate_loquendo_speech(text, voice_id, rate, output_file):
@@ -128,22 +129,27 @@ def build_filelist(segments, talking_imgs, silent_imgs, filelist_path, frame_rat
     # "ffconcat" extendido y el directive "duration" se ignora salvo
     # en el primer/último bloque (causa del bug reportado).
     lines = ["ffconcat version 1.0"]
+    # Round-robin: un ciclo por pool, persistente entre segmentos, para
+    # que la rotación siga el orden de subida sin reiniciar en cada corte.
+    talking_cycle = itertools.cycle(talking_imgs) if talking_imgs else None
+    silent_cycle = itertools.cycle(silent_imgs) if silent_imgs else None
+
     for start, end, label in segments:
         duration = end - start
-        pool = talking_imgs if label == "talking" else silent_imgs
-        if not pool:
+        cycle = talking_cycle if label == "talking" else silent_cycle
+        if cycle is None:
             continue
         current = 0.0
         while current < duration - 1e-6:
             step = min(frame_rate, duration - current)
-            img = random.choice(pool)
+            img = next(cycle)
             lines.append(f"file '{img.name}'")
             lines.append(f"duration {round(step, 3)}")
             current += step
 
-    last_pool = talking_imgs if segments[-1][2] == "talking" else silent_imgs
-    if last_pool:
-        lines.append(f"file '{random.choice(last_pool).name}'")
+    last_cycle = talking_cycle if segments[-1][2] == "talking" else silent_cycle
+    if last_cycle:
+        lines.append(f"file '{next(last_cycle).name}'")
     filelist_path.write_text("\n".join(lines), encoding="utf-8")
 
 
