@@ -1,14 +1,9 @@
 # Fuentes para los subtítulos
 
-La sección 5 de la app dibuja los subtítulos con la fuente **Georgia**. Copia aquí los archivos
-(los puedes sacar de `C:\Windows\Fonts` en Windows o de macOS):
+La sección 5 usa por defecto **Gelasio** (incluida aquí, licencia OFL), una fuente con las mismas
+métricas que **Georgia**, así que el encuadre y los saltos de línea coinciden con tu diseño en Premiere.
 
-- `georgia.ttf` (regular, obligatorio)
-- `georgiai.ttf` (itálica, opcional; si falta, libass genera una itálica sintética como Premiere)
-- `georgiab.ttf` (negrita, opcional)
+Para usar Georgia exacta, copia en esta carpeta `georgia.ttf` (y opcionalmente `georgiai.ttf`);
+la app la prefiere automáticamente. Georgia es de Microsoft: si el repo es público, no la subas a GitHub.
 
-Georgia es una fuente con licencia de Microsoft: si tu repositorio es público, considera no
-subirla a GitHub (agrega `fonts/*.ttf` a `.gitignore` y súbela solo al servidor), o usa
-**Gelasio** (licencia OFL, métricas compatibles con Georgia) guardándola aquí como `Gelasio-Regular.ttf`.
-
-Si no hay ninguna de las dos, la app usa DejaVu Serif y muestra un aviso.
+Orden de prioridad: Georgia > Gelasio > DejaVu Serif (último recurso, con aviso).

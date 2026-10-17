@@ -105,7 +105,7 @@ def resolve_font(fonts_dir: Path) -> Tuple[str, Optional[str]]:
         if any(n.startswith("georgia") for n in names):
             return "Georgia", None
         if any(n.startswith("gelasio") for n in names):
-            return "Gelasio", "Usando Gelasio (métricas compatibles con Georgia). Agrega georgia.ttf a /fonts para el look exacto."
+            return "Gelasio", None  # OFL, métricas compatibles con Georgia; viene incluida en /fonts
     if shutil.which("fc-list"):
         out = subprocess.run(["fc-list", ":family=Georgia"], capture_output=True, text=True).stdout
         if out.strip():
