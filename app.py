@@ -12,6 +12,12 @@ import random
 import itertools
 from pathlib import Path
 
+from subtitles import (
+    CODECS, EXIT_STYLES, CaptionStyle, build_ass, estimate_word_timings,
+    render_green_video, resolve_font, speech_segments_from_intervals,
+    synthesize_with_timings, tokenize,
+)
+
 def generate_loquendo_speech(text, voice_id, rate, output_file):
     engine = pyttsx3.init()
     
@@ -333,3 +339,191 @@ if generate:
             status.error(f"Error: {exc}")
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# 5. Subtítulos estilo Hormozi sobre pantalla verde
+# ---------------------------------------------------------------------------
+FONTS_DIR = BASE_DIR / "fonts"
+MAX_DOWNLOAD_MB = 500
+
+st.markdown("---")
+st.subheader("5. Subtítulos estilo Hormozi (pantalla verde)")
+st.caption(
+    "Genera un video con fondo verde (#00FF00) y subtítulos palabra por palabra, listo para "
+    "aplicar Ultra Key en Premiere Pro y colocarlo sobre tu metraje."
+)
+
+font_family, font_warning = resolve_font(FONTS_DIR)
+if font_warning:
+    st.warning(font_warning)
+
+sub_text = st.text_area("Texto de los subtítulos:", value=user_text, height=120, key="sub_text")
+
+audio_modes = ["Generar voz con TTS (tiempos exactos por palabra)"]
+if "generated_audio_bytes" in st.session_state:
+    audio_modes.append("Usar el audio generado en la Sección 0 (tiempos estimados)")
+audio_modes.append("Subir un audio (tiempos estimados)")
+sub_mode = st.radio("Fuente del audio", audio_modes, key="sub_mode")
+
+sub_audio_file = None
+if sub_mode.startswith("Subir"):
+    sub_audio_file = st.file_uploader("Audio", type=["mp3", "wav", "m4a"], key="sub_audio")
+if sub_mode.startswith("Generar"):
+    st.caption(f"Usa la voz, velocidad y tono de la Sección 0: {selected_voice_label} · {speed:+d}% · {pitch:+d} Hz")
+else:
+    with st.expander("Detección de pausas (para estimar tiempos)"):
+        sp1, sp2 = st.columns(2)
+        with sp1:
+            sub_noise_db = st.slider("Umbral de ruido (dB)", -50, -10, -35, key="sub_noise")
+        with sp2:
+            sub_min_silence = st.slider("Pausa mínima (s)", 0.10, 0.80, 0.25, step=0.05, key="sub_minsil")
+
+st.markdown("**Estilo**")
+e1, e2, e3, e4 = st.columns(4)
+with e1:
+    sub_words = st.slider("Palabras por bloque", 1, 4, 2, key="sub_words")
+with e2:
+    sub_chars = st.slider("Máx. caracteres por línea", 6, 24, 10, key="sub_chars")
+with e3:
+    sub_exit_label = st.selectbox("Animación de salida", list(EXIT_STYLES.keys()), key="sub_exit")
+with e4:
+    sub_upper = st.checkbox("MAYÚSCULAS", value=False, key="sub_upper")
+
+h1, h2 = st.columns([1, 3])
+with h1:
+    sub_highlight = st.checkbox("Resaltar palabra activa", value=True, key="sub_hl")
+with h2:
+    sub_hl_color = st.color_picker("Color del resaltado", "#FFE600", key="sub_hlc", disabled=not sub_highlight)
+
+with st.expander("Parámetros de Premiere Pro (avanzado)"):
+    st.caption(f"Valores por defecto tomados de tu panel de texto. Fuente en uso: {font_family}.")
+    a1, a2, a3, a4 = st.columns(4)
+    with a1:
+        sub_size = st.number_input("Tamaño de fuente", 10.0, 400.0, 100.0, key="sub_size")
+        sub_stroke = st.number_input("Trazo exterior (px)", 0.0, 20.0, 4.0, step=0.5, key="sub_stroke")
+    with a2:
+        sub_sx = st.number_input("Escala horizontal (%)", 10.0, 600.0, 135.0, key="sub_sx")
+        sub_sy = st.number_input("Escala vertical (%)", 10.0, 600.0, 308.0, key="sub_sy")
+    with a3:
+        sub_track = st.number_input("Tracking", -500.0, 500.0, -55.0, key="sub_track")
+        sub_lead = st.number_input("Interlineado", -300.0, 300.0, -54.0, key="sub_lead")
+    with a4:
+        sub_px = st.number_input("Posición X (sobre 1080)", 0.0, 4000.0, 535.1, key="sub_px")
+        sub_py = st.number_input("Posición Y (sobre 1920)", 0.0, 4000.0, 800.4, key="sub_py")
+
+st.markdown("**Formato, calidad y códec**")
+f1, f2, f3, f4 = st.columns(4)
+with f1:
+    sub_res = st.selectbox("Resolución", list(RES_MAP.keys()), index=1, key="sub_res")
+with f2:
+    sub_aspect = st.selectbox("Relación de aspecto", list(ASPECT_MAP.keys()), index=1, key="sub_aspect")
+with f3:
+    sub_fps = st.selectbox("FPS", [24, 30, 60], index=1, key="sub_fps")
+with f4:
+    sub_codec = st.selectbox(
+        "Códec", list(CODECS.keys()), key="sub_codec",
+        help="H.264 pesa poco. ProRes/DNxHR conservan mejor los bordes para el chroma key pero generan archivos "
+             "muy grandes: úsalos con textos cortos o descarga el .mov desde una ejecución local.",
+    )
+g1, g2 = st.columns(2)
+with g1:
+    sub_crf_label = st.selectbox(
+        "Calidad (solo H.264)", list(CRF_MAP.keys()), index=0, key="sub_crf",
+        disabled=not CODECS[sub_codec]["uses_crf"],
+    )
+with g2:
+    sub_include_audio = st.checkbox("Incluir el audio en el video", value=True, key="sub_inc_audio")
+
+if st.button("Generar video con subtítulos", use_container_width=True, key="sub_generate"):
+    st.session_state.pop("sub_result", None)
+    if not sub_text.strip():
+        st.error("Escribe el texto de los subtítulos.")
+    elif sub_mode.startswith("Subir") and sub_audio_file is None:
+        st.error("Sube un audio o cambia la fuente del audio.")
+    else:
+        sub_session = uuid.uuid4().hex[:8]
+        sub_dir = TEMP_DIR / f"sub_{sub_session}"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        sub_status = st.empty()
+        try:
+            if sub_mode.startswith("Generar"):
+                sub_status.info("Generando voz y tiempos por palabra...")
+                audio_path = sub_dir / "audio.mp3"
+                rate_str = f"{'+' if speed >= 0 else ''}{speed}%"
+                pitch_str = f"{'+' if pitch >= 0 else ''}{pitch}Hz"
+                words, timing_mode = synthesize_with_timings(
+                    sub_text, VOICES[selected_voice_label], rate_str, pitch_str, audio_path
+                )
+            else:
+                sub_status.info("Analizando audio y estimando tiempos...")
+                if sub_mode.startswith("Usar"):
+                    audio_path = sub_dir / "audio.mp3"
+                    audio_path.write_bytes(st.session_state["generated_audio_bytes"])
+                else:
+                    audio_path = sub_dir / f"audio{Path(sub_audio_file.name).suffix}"
+                    audio_path.write_bytes(sub_audio_file.getbuffer())
+                audio_len = get_duration(audio_path)
+                segs = speech_segments_from_intervals(
+                    build_intervals(audio_len, detect_silence(audio_path, sub_noise_db, sub_min_silence))
+                )
+                words = estimate_word_timings(tokenize(sub_text), segs)
+                timing_mode = "estimados"
+
+            if not words:
+                raise RuntimeError("No se obtuvieron palabras con tiempos. Revisa el texto y el audio.")
+
+            audio_len = get_duration(audio_path)
+            total = audio_len + 0.4
+            width, height = target_dims(sub_res, sub_aspect)
+            style = CaptionStyle(
+                font_family=font_family, font_size=sub_size, scale_x=sub_sx, scale_y=sub_sy,
+                tracking=sub_track, leading=sub_lead, stroke_px=sub_stroke, pos_x=sub_px, pos_y=sub_py,
+                words_per_block=sub_words, max_chars_line=sub_chars, uppercase=sub_upper,
+                highlight=sub_highlight, highlight_color=sub_hl_color, exit_style=EXIT_STYLES[sub_exit_label],
+            )
+            (sub_dir / "captions.ass").write_text(build_ass(words, style, width, height, total), encoding="utf-8")
+
+            sub_status.info("Renderizando video con FFmpeg...")
+            ext = CODECS[sub_codec]["ext"]
+            out_name = f"subtitulos_{sub_session}.{ext}"
+            res = render_green_video(
+                "captions.ass", audio_path.name if sub_include_audio else None, out_name,
+                width, height, sub_fps, total, sub_codec, CRF_MAP[sub_crf_label], FONTS_DIR, sub_dir,
+            )
+            out_path = sub_dir / out_name
+            if out_path.exists() and out_path.stat().st_size > 0:
+                final_path = OUTPUT_DIR / out_name
+                shutil.copy(out_path, final_path)
+                size_mb = final_path.stat().st_size / 1e6
+                if size_mb > MAX_DOWNLOAD_MB:
+                    sub_status.warning(
+                        f"El archivo pesa {size_mb:.0f} MB, demasiado para descargarlo desde la app. "
+                        "Usa H.264, un texto más corto o ejecuta la app en local."
+                    )
+                else:
+                    st.session_state["sub_result"] = {
+                        "bytes": final_path.read_bytes(), "name": out_name, "ext": ext,
+                        "info": f"{len(words)} palabras · tiempos {timing_mode} · {width}x{height} @ {sub_fps} fps · {size_mb:.1f} MB",
+                    }
+                    sub_status.success("Video con subtítulos generado.")
+            else:
+                sub_status.error("Fallo en el renderizado.")
+                st.code(res.stderr[-3000:])
+        except Exception as exc:
+            sub_status.error(f"Error: {exc}")
+        finally:
+            shutil.rmtree(sub_dir, ignore_errors=True)
+
+if "sub_result" in st.session_state:
+    r = st.session_state["sub_result"]
+    st.caption(r["info"])
+    if r["ext"] == "mp4":
+        st.video(r["bytes"])
+    else:
+        st.info("Los .mov (ProRes/DNxHR) no se previsualizan en el navegador; descárgalo para verlo en Premiere.")
+    st.download_button(
+        f"Descargar {r['ext'].upper()}", data=r["bytes"], file_name=r["name"],
+        mime="video/mp4" if r["ext"] == "mp4" else "video/quicktime", use_container_width=True,
+        key="sub_download",
+    )
