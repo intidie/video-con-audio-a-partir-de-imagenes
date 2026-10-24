@@ -1,9 +1,15 @@
 # Fuentes para los subtítulos
 
-La sección 5 usa por defecto **Gelasio** (incluida aquí, licencia OFL), una fuente con las mismas
-métricas que **Georgia**, así que el encuadre y los saltos de línea coinciden con tu diseño en Premiere.
+La sección 5 lista automáticamente todas las fuentes de esta carpeta, las del sistema y las que subas
+desde la propia app («Subir fuentes propias», sirve para SimSun, Lucida Console, Georgia, etc.).
 
-Para usar Georgia exacta, copia en esta carpeta `georgia.ttf` (y opcionalmente `georgiai.ttf`);
-la app la prefiere automáticamente. Georgia es de Microsoft: si el repo es público, no la subas a GitHub.
+Incluidas (licencia OFL, se pueden redistribuir; cada licencia está en `OFL-*.txt`):
+- **Gelasio**: métricas compatibles con Georgia (es la fuente por defecto si no hay Georgia).
+- **Anton**, **Bebas Neue**, **Poppins** (Regular, Bold, ExtraBold): estilos tipo Hormozi / Reels.
+- **Cousine**: monoespaciada (parecida a Lucida Console / Courier New).
 
-Orden de prioridad: Georgia > Gelasio > DejaVu Serif (último recurso, con aviso).
+Para usar Georgia exacta, copia `georgia.ttf` (y opcionalmente `georgiai.ttf`) aquí, o súbela desde la app.
+Georgia, SimSun y Lucida Console son de Microsoft: si el repo es público, no las subas a GitHub.
+
+Orden de prioridad por defecto: Georgia > Gelasio. Si la fuente elegida no existe, la previsualización
+avisa qué fuente sustituta está usando libass.

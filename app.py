@@ -12,10 +12,14 @@ import random
 import itertools
 from pathlib import Path
 
+import json
+from dataclasses import asdict
+
 from subtitles import (
     CODECS, EXIT_STYLES, CaptionStyle, build_ass, estimate_word_timings,
-    render_green_video, resolve_font, speech_segments_from_intervals,
-    synthesize_with_timings, tokenize,
+    font_substitutions, list_font_families, prepare_fonts_dir, preview_block_count,
+    render_green_video, render_preview_png, speech_segments_from_intervals,
+    synthesize_with_timings, system_font_families, tokenize,
 )
 
 def generate_loquendo_speech(text, voice_id, rate, output_file):
@@ -354,9 +358,34 @@ st.caption(
     "aplicar Ultra Key en Premiere Pro y colocarlo sobre tu metraje."
 )
 
-font_family, font_warning = resolve_font(FONTS_DIR)
-if font_warning:
-    st.warning(font_warning)
+st.markdown(
+    """<style>
+    div[data-testid="stColumn"]:has(.sub-preview-anchor),
+    div[data-testid="column"]:has(.sub-preview-anchor) {position: sticky; top: 3.5rem; align-self: flex-start;}
+    </style>""",
+    unsafe_allow_html=True,
+)
+
+
+@st.cache_data(show_spinner=False)
+def cached_system_fonts():
+    return system_font_families()
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def cached_preview(style_json: str, text: str, fonts_dir: str, w: int, h: int, block: int):
+    return render_preview_png(CaptionStyle(**json.loads(style_json)), text, Path(fonts_dir), w, h, block)
+
+
+def style_toggle(label: str, key: str, default_on: bool, default_color: str):
+    """Casilla + selector de color en una fila (como las secciones Rellenar/Trazo/Fondo/Sombra de Premiere)."""
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        on = st.checkbox(label, value=default_on, key=f"{key}_on")
+    with c2:
+        color = st.color_picker(label, default_color, key=f"{key}_color", disabled=not on, label_visibility="collapsed")
+    return on, color
+
 
 sub_text = st.text_area("Texto de los subtítulos:", value=user_text, height=120, key="sub_text")
 
@@ -379,38 +408,90 @@ else:
         with sp2:
             sub_min_silence = st.slider("Pausa mínima (s)", 0.10, 0.80, 0.25, step=0.05, key="sub_minsil")
 
-st.markdown("**Estilo**")
-e1, e2, e3, e4 = st.columns(4)
-with e1:
-    sub_words = st.slider("Palabras por bloque", 1, 4, 2, key="sub_words")
-with e2:
-    sub_chars = st.slider("Máx. caracteres por línea", 6, 24, 10, key="sub_chars")
-with e3:
+st.markdown("**Estilo y previsualización en tiempo real**")
+ctrl_col, prev_col = st.columns([3, 2], gap="large")
+with prev_col:
+    st.markdown('<span class="sub-preview-anchor"></span>', unsafe_allow_html=True)
+    preview_slot = st.container()
+
+with ctrl_col:
+    st.markdown("##### Fuente")
+    sub_font_files = st.file_uploader(
+        "Subir fuentes propias (.ttf / .otf): SimSun, Lucida Console, Georgia...",
+        type=["ttf", "otf"], accept_multiple_files=True, key="sub_font_files",
+    )
+    sub_fonts_dir = prepare_fonts_dir(FONTS_DIR, [(f.name, f.getvalue()) for f in sub_font_files], TEMP_DIR)
+    bundled_fonts = list_font_families(sub_fonts_dir)
+    other_fonts = [f for f in cached_system_fonts() if f not in bundled_fonts]
+    OTHER_FONT = "Otra (escribir el nombre)..."
+    font_options = bundled_fonts + other_fonts + [OTHER_FONT]
+    default_font = next((f for f in ("Georgia", "Gelasio") if f in font_options), font_options[0])
+    sub_font_choice = st.selectbox("Fuente", font_options, index=font_options.index(default_font), key="sub_font")
+    if sub_font_choice == OTHER_FONT:
+        sub_font_family = st.text_input(
+            "Nombre exacto de la fuente instalada", value="SimSun", key="sub_font_custom",
+            help="Debe estar instalada en el equipo/servidor; si no, súbela arriba y aparecerá en la lista.",
+        ).strip() or default_font
+    else:
+        sub_font_family = sub_font_choice
+
+    t1, t2, t3, t4, t5 = st.columns([2, 1.3, 1.3, 1.5, 1.7])
+    with t1:
+        sub_size = st.number_input("Tamaño", 10.0, 400.0, 100.0, key="sub_size")
+    with t2:
+        sub_bold = st.checkbox("Negrita", value=False, key="sub_bold")
+    with t3:
+        sub_italic = st.checkbox("Cursiva", value=True, key="sub_italic")
+    with t4:
+        sub_underline = st.checkbox("Subrayado", value=False, key="sub_underline")
+    with t5:
+        sub_upper = st.checkbox("MAYÚSCULAS", value=False, key="sub_upper")
+
+    st.markdown("##### Rellenar · Trazo · Fondo · Sombra")
+    sub_fill_on, sub_fill = style_toggle("Rellenar", "sub_fill", True, "#FFFFFF")
+
+    sub_stroke_on, sub_stroke_color = style_toggle("Trazo (contorno exterior)", "sub_stroke", True, "#000000")
+    sub_stroke = st.number_input("Grosor del trazo (px)", 0.0, 30.0, 4.0, step=0.5, key="sub_stroke", disabled=not sub_stroke_on)
+
+    sub_box_on, sub_box_color = style_toggle("Fondo (marco sólido de color)", "sub_box", False, "#000000")
+    b1, b2, b3 = st.columns([2, 1, 1])
+    with b1:
+        sub_box_opacity = st.slider("Opacidad del fondo (%)", 0, 100, 100, key="sub_box_op", disabled=not sub_box_on)
+    with b2:
+        sub_box_pad = st.number_input("Margen (px)", 0.0, 100.0, 10.0, step=1.0, key="sub_box_pad", disabled=not sub_box_on)
+    with b3:
+        sub_box_radius = st.number_input("Esquinas (px)", 0.0, 200.0, 0.0, step=2.0, key="sub_box_radius", disabled=not sub_box_on)
+
+    sub_shadow_on, sub_shadow_color = style_toggle("Sombra", "sub_shadow", False, "#000000")
+    sd1, sd2 = st.columns(2)
+    with sd1:
+        sub_shadow_dist = st.number_input("Distancia de la sombra (px)", 0.0, 60.0, 6.0, step=1.0, key="sub_shadow_dist", disabled=not sub_shadow_on)
+    with sd2:
+        sub_shadow_op = st.slider("Opacidad de la sombra (%)", 0, 100, 60, key="sub_shadow_op", disabled=not sub_shadow_on)
+
+    st.markdown("##### Bloques y animación")
+    e1, e2 = st.columns(2)
+    with e1:
+        sub_words = st.slider("Palabras por bloque", 1, 4, 2, key="sub_words")
+    with e2:
+        sub_chars = st.slider("Máx. caracteres por línea", 6, 24, 10, key="sub_chars")
     sub_exit_label = st.selectbox("Animación de salida", list(EXIT_STYLES.keys()), key="sub_exit")
-with e4:
-    sub_upper = st.checkbox("MAYÚSCULAS", value=False, key="sub_upper")
+    h1, h2 = st.columns([3, 1])
+    with h1:
+        sub_highlight = st.checkbox("Resaltar palabra activa", value=True, key="sub_hl")
+    with h2:
+        sub_hl_color = st.color_picker("Color del resaltado", "#FFE600", key="sub_hlc", disabled=not sub_highlight, label_visibility="collapsed")
 
-h1, h2 = st.columns([1, 3])
-with h1:
-    sub_highlight = st.checkbox("Resaltar palabra activa", value=True, key="sub_hl")
-with h2:
-    sub_hl_color = st.color_picker("Color del resaltado", "#FFE600", key="sub_hlc", disabled=not sub_highlight)
-
-with st.expander("Parámetros de Premiere Pro (avanzado)"):
-    st.caption(f"Valores por defecto tomados de tu panel de texto. Fuente en uso: {font_family}.")
-    a1, a2, a3, a4 = st.columns(4)
-    with a1:
-        sub_size = st.number_input("Tamaño de fuente", 10.0, 400.0, 100.0, key="sub_size")
-        sub_stroke = st.number_input("Trazo exterior (px)", 0.0, 20.0, 4.0, step=0.5, key="sub_stroke")
-    with a2:
-        sub_sx = st.number_input("Escala horizontal (%)", 10.0, 600.0, 135.0, key="sub_sx")
-        sub_sy = st.number_input("Escala vertical (%)", 10.0, 600.0, 308.0, key="sub_sy")
-    with a3:
-        sub_track = st.number_input("Tracking", -500.0, 500.0, -55.0, key="sub_track")
-        sub_lead = st.number_input("Interlineado", -300.0, 300.0, -54.0, key="sub_lead")
-    with a4:
-        sub_px = st.number_input("Posición X (sobre 1080)", 0.0, 4000.0, 535.1, key="sub_px")
-        sub_py = st.number_input("Posición Y (sobre 1920)", 0.0, 4000.0, 800.4, key="sub_py")
+    with st.expander("Transformar (valores de Premiere Pro)"):
+        a1, a2 = st.columns(2)
+        with a1:
+            sub_sx = st.number_input("Escala horizontal (%)", 10.0, 600.0, 135.0, key="sub_sx")
+            sub_track = st.number_input("Tracking", -500.0, 500.0, -55.0, key="sub_track")
+            sub_px = st.number_input("Posición X (sobre 1080)", 0.0, 4000.0, 535.1, key="sub_px")
+        with a2:
+            sub_sy = st.number_input("Escala vertical (%)", 10.0, 600.0, 308.0, key="sub_sy")
+            sub_lead = st.number_input("Interlineado", -300.0, 300.0, -54.0, key="sub_lead")
+            sub_py = st.number_input("Posición Y (sobre 1920)", 0.0, 4000.0, 800.4, key="sub_py")
 
 st.markdown("**Formato, calidad y códec**")
 f1, f2, f3, f4 = st.columns(4)
@@ -434,6 +515,44 @@ with g1:
     )
 with g2:
     sub_include_audio = st.checkbox("Incluir el audio en el video", value=True, key="sub_inc_audio")
+
+sub_style = CaptionStyle(
+    font_family=sub_font_family, font_size=sub_size, italic=sub_italic, bold=sub_bold,
+    underline=sub_underline, uppercase=sub_upper,
+    fill_on=sub_fill_on, fill=sub_fill,
+    stroke_on=sub_stroke_on, stroke=sub_stroke_color, stroke_px=sub_stroke,
+    box_on=sub_box_on, box_color=sub_box_color, box_opacity=sub_box_opacity, box_pad=sub_box_pad, box_radius=sub_box_radius,
+    shadow_on=sub_shadow_on, shadow_color=sub_shadow_color, shadow_dist=sub_shadow_dist, shadow_opacity=sub_shadow_op,
+    scale_x=sub_sx, scale_y=sub_sy, tracking=sub_track, leading=sub_lead, pos_x=sub_px, pos_y=sub_py,
+    words_per_block=sub_words, max_chars_line=sub_chars,
+    highlight=sub_highlight, highlight_color=sub_hl_color, exit_style=EXIT_STYLES[sub_exit_label],
+)
+
+# Previsualización en tiempo real: Streamlit vuelve a ejecutar el script al tocar cualquier control
+# y este fotograma se dibuja con el mismo motor (libass) que el video final.
+with preview_slot:
+    st.markdown("##### Previsualización")
+    n_blocks = preview_block_count(sub_text, sub_style)
+    if st.session_state.get("sub_prev_block", 1) > n_blocks:
+        st.session_state["sub_prev_block"] = n_blocks
+    if n_blocks > 1:
+        prev_block = st.slider("Bloque de texto a previsualizar", 1, n_blocks, 1, key="sub_prev_block") - 1
+    else:
+        prev_block = 0
+    pw, ph = target_dims(sub_res, sub_aspect)
+    pscale = 640 / max(pw, ph)
+    pw, ph = int(pw * pscale) // 2 * 2, int(ph * pscale) // 2 * 2
+    prev_png, prev_log, _ = cached_preview(json.dumps(asdict(sub_style)), sub_text, str(sub_fonts_dir), pw, ph, prev_block)
+    if prev_png:
+        st.image(prev_png, caption="Fondo verde #00FF00. Se actualiza al instante al cambiar cualquier control.")
+    else:
+        st.error("No se pudo generar la previsualización.")
+        st.code(prev_log[-1500:])
+    for req_font, used_font in font_substitutions(prev_log):
+        st.warning(
+            f"La fuente «{req_font}» no está instalada: se está usando «{used_font}». "
+            "Súbela en «Subir fuentes propias» y aparecerá en la lista."
+        )
 
 if st.button("Generar video con subtítulos", use_container_width=True, key="sub_generate"):
     st.session_state.pop("sub_result", None)
@@ -476,20 +595,15 @@ if st.button("Generar video con subtítulos", use_container_width=True, key="sub
             audio_len = get_duration(audio_path)
             total = audio_len + 0.4
             width, height = target_dims(sub_res, sub_aspect)
-            style = CaptionStyle(
-                font_family=font_family, font_size=sub_size, scale_x=sub_sx, scale_y=sub_sy,
-                tracking=sub_track, leading=sub_lead, stroke_px=sub_stroke, pos_x=sub_px, pos_y=sub_py,
-                words_per_block=sub_words, max_chars_line=sub_chars, uppercase=sub_upper,
-                highlight=sub_highlight, highlight_color=sub_hl_color, exit_style=EXIT_STYLES[sub_exit_label],
-            )
-            (sub_dir / "captions.ass").write_text(build_ass(words, style, width, height, total), encoding="utf-8")
+            style = sub_style
+            (sub_dir / "captions.ass").write_text(build_ass(words, style, width, height, total, sub_fonts_dir), encoding="utf-8")
 
             sub_status.info("Renderizando video con FFmpeg...")
             ext = CODECS[sub_codec]["ext"]
             out_name = f"subtitulos_{sub_session}.{ext}"
             res = render_green_video(
                 "captions.ass", audio_path.name if sub_include_audio else None, out_name,
-                width, height, sub_fps, total, sub_codec, CRF_MAP[sub_crf_label], FONTS_DIR, sub_dir,
+                width, height, sub_fps, total, sub_codec, CRF_MAP[sub_crf_label], sub_fonts_dir, sub_dir,
             )
             out_path = sub_dir / out_name
             if out_path.exists() and out_path.stat().st_size > 0:
