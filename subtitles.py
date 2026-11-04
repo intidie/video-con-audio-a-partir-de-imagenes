@@ -1,8 +1,8 @@
-"""Subtítulos estilo Hormozi sobre pantalla verde (chroma key) con FFmpeg + libass.
+"""Subtítulos estilo Hormozi sobre pantalla azul oscura (chroma key) con FFmpeg + libass.
 
 Flujo:
     texto (+ audio) -> tiempos por palabra -> bloques de 1-3 palabras -> archivo .ass
-    -> FFmpeg dibuja el .ass sobre un fondo verde -> MP4 (H.264) o MOV (ProRes / DNxHR)
+    -> FFmpeg dibuja el .ass sobre un fondo azul oscuro -> MP4 (H.264) o MOV (ProRes / DNxHR)
 
 El estilo por defecto replica los valores del panel "Texto de origen" de Premiere Pro:
 Georgia, itálica, tamaño 100, relleno blanco, trazo negro 4 px exterior, tracking -55,
@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -26,7 +26,8 @@ import edge_tts
 TICKS_PER_SECOND = 10_000_000  # edge-tts entrega offsets en unidades de 100 ns
 REF_W, REF_H = 1080, 1920      # fotograma de referencia de las capturas de Premiere
 AUTO_LEADING = 1.2             # interlineado automático de Premiere (x tamaño); el valor de "leading" se suma a esto
-CHROMA_GREEN = "0x00FF00"
+CHROMA_BG = "0x00008B"  # azul oscuro (pantalla azul para chroma key)
+GRAIN = "noise=alls=22:allf=t"  # granulado opcional (efecto cartel desgastado)
 
 EXIT_STYLES = {
     "Pop: crece y se desvanece": "pop",
@@ -113,6 +114,11 @@ class CaptionStyle:
     exit_style: str = "pop"
     in_ms: int = 110
     out_ms: int = 160
+    letter_anim: bool = True   # letras alternas de cada palabra cambian de tamaño durante 1 s
+    wobble: bool = True        # recuadro completo: rotación y tamaño sutiles cada 0,5 s
+    poster: bool = False       # estilo cartel (SADE / SUPER STAR / INTI-NET) en serif
+    invert: bool = False       # invierte colores del estilo cartel (blanco sobre negro)
+    grain: bool = False        # granulado
 
 
 # --------------------------------------------------------------------------- #
@@ -304,10 +310,24 @@ def _rounded_rect(w: float, h: float, r: float) -> str:
     )
 
 
+def apply_poster(style: CaptionStyle) -> CaptionStyle:
+    """Estilo cartel: serif negrita condensada y alta, recuadro sólido; invert = blanco sobre negro."""
+    if not style.poster:
+        return style
+    ink, paper = ("#FFFFFF", "#000000") if style.invert else ("#000000", "#FFFFFF")
+    return replace(
+        style, italic=False, bold=True, uppercase=True, fill_on=True, fill=ink,
+        stroke_on=True, stroke=ink, stroke_px=2.0, box_on=True, box_color=paper, box_opacity=100.0,
+        box_pad=14.0, box_radius=0.0, shadow_on=False, scale_x=70.0, scale_y=170.0,
+        tracking=-20.0, leading=-45.0, highlight=False,
+    )
+
+
 def build_ass(
     words: Sequence[Word], style: CaptionStyle, width: int, height: int, total_duration: float,
     fonts_dir: Optional[Path] = None,
 ) -> str:
+    style = apply_poster(style)
     k = min(width, height) / 1080.0                  # factor de tamaño respecto al diseño base
     sx, sy = style.scale_x, style.scale_y
     x0 = style.pos_x / REF_W * width
@@ -374,6 +394,41 @@ def build_ass(
             return f"\\move({_f(cx)},{_f(cy)},{_f(cx)},{_f(cy - rise)},{t0},{dur_ms})"
         return f"\\pos({_f(cx)},{_f(cy)})"
 
+    fs_base = size_px * fm.cell
+    fs_big = fs_base * 1.12                          # cambio de tamaño de letra (+12 %)
+    step, ang = 0.5, 0.6                             # vaivén del recuadro: cada 0,5 s, +-0,6 grados y +2 px
+
+    def pieces(a: float, b: float) -> List[Tuple[float, float]]:
+        """Parte [a, b] en cortes de 0,5 s (rejilla global) para el vaivén del recuadro."""
+        if not style.wobble:
+            return [(a, b)]
+        cuts, n = [a], int(a / step) + 1
+        while n * step < b - 0.03:
+            if n * step > a + 0.03:
+                cuts.append(n * step)
+            n += 1
+        cuts.append(b)
+        return list(zip(cuts[:-1], cuts[1:]))
+
+    def letters(txt: str, t1: int) -> str:
+        """Una letra de por medio de cada palabra crece y vuelve a su tamaño durante 1 s (inicia en t1 ms)."""
+        if not style.letter_anim:
+            return txt
+        out, n = [], 0
+        for ch in txt:
+            if ch.isalpha():
+                if n % 2 == 0:
+                    out.append(
+                        f"{{\\t({t1},{t1 + 500},\\fs{_f(fs_big)})\\t({t1 + 500},{t1 + 1000},\\fs{_f(fs_base)})}}"
+                        f"{ch}{{\\fs{_f(fs_base)}}}"
+                    )
+                else:
+                    out.append(ch)
+                n += 1
+            else:
+                out.append(ch)
+        return "".join(out)
+
     blocks = make_blocks(words, max(1, style.words_per_block), style.uppercase)
     events: List[str] = []
     for bi, blk in enumerate(blocks):
@@ -400,52 +455,69 @@ def build_ass(
         lines = wrap_lines(blk, style.max_chars_line)
         n_lines = len(lines)
         line_y = [y0 + (li - (n_lines - 1) / 2.0) * line_pitch for li in range(n_lines)]
-
-        # --- Fondo / marco sólido: un solo rectángulo ajustado a todo el bloque (capa 0)
+        texts = [" ".join(blk[i].text for i in idxs) for idxs in lines]
+        widths = [(text_width_em(fm, t) * size_px + len(t) * spacing) * sx / 100.0 for t in texts]
+        ref_w = max(max(widths) + (2 * pad_x if style.box_on else 0.0), 20.0)
+        ocy = sum(line_y) / n_lines                  # centro de giro común (recuadro + texto)
         if style.box_on:
-            texts = [" ".join(blk[i].text for i in idxs) for idxs in lines]
-            widths = [
-                (text_width_em(fm, t) * size_px + len(t) * spacing) * sx / 100.0 for t in texts
-            ]
             s_y = size_px * sy / 100.0
             base_first = line_y[0] + (fm.ascent - fm.cell / 2.0) * s_y
             base_last = line_y[-1] + (fm.ascent - fm.cell / 2.0) * s_y
             top = base_first - fm.cap_top * s_y - pad_y
             bottom = base_last + fm.desc_bottom * s_y + pad_y
+            ocy = (top + bottom) / 2.0
+
+        def wob(t: float, bx: float, by: float):
+            if not style.wobble:
+                return "", bx, by
+            on = int(t / step + 1e-6) % 2
+            f = (ref_w + 2.0) / ref_w if on else 1.0   # +2 px de ancho en el estado "on"
+            bx, by = bx * f, by * f
+            return f"\\org({_f(x0)},{_f(ocy)})\\frz{_f(ang if on else -ang)}\\fscx{_f(bx)}\\fscy{_f(by)}", bx, by
+
+        # --- Fondo / marco sólido: un solo rectángulo ajustado a todo el bloque (capa 0)
+        if style.box_on:
             bw = max(widths) + 2 * pad_x
             bh = bottom - top
-            bdur = max(1, int(round((b_end - b_start) * 1000)))
-            btags = (
-                f"{{\\an5{position(x0, (top + bottom) / 2.0, bdur, True)}\\bord0\\shad0\\p1"
-                f"\\1c{_bgr(style.box_color)}\\1a{_alpha_tag(a_box)}"
-                f"{anim(True, True, bdur, hide_b, show_b, 100.0, 100.0)}}}"
-            )
-            events.append(
-                f"Dialogue: 0,{_ts(b_start)},{_ts(b_end)},Hormozi,,0,0,0,,{btags}"
-                f"{_rounded_rect(bw, bh, style.box_radius * k)}{{\\p0}}"
-            )
+            for pa, pb in pieces(b_start, b_end):
+                bdur = max(1, int(round((pb - pa) * 1000)))
+                b_first, b_last = pa <= b_start + 1e-6, pb >= b_end - 1e-6
+                wt, wbx, wby = wob(pa, 100.0, 100.0)
+                btags = (
+                    f"{{\\an5{position(x0, (top + bottom) / 2.0, bdur, b_last)}\\bord0\\shad0\\p1"
+                    f"\\1c{_bgr(style.box_color)}\\1a{_alpha_tag(a_box)}{wt}"
+                    f"{anim(b_first, b_last, bdur, hide_b, show_b, wbx, wby)}}}"
+                )
+                events.append(
+                    f"Dialogue: 0,{_ts(pa)},{_ts(pb)},Hormozi,,0,0,0,,{btags}"
+                    f"{_rounded_rect(bw, bh, style.box_radius * k)}{{\\p0}}"
+                )
 
-        # --- Texto (capa 1), un evento por palabra activa para el resaltado
+        # --- Texto (capa 1), un evento por palabra activa (resaltado) y por tramo de 0,5 s (vaivén)
         n_states = len(states)
         for si, state in enumerate(states):
             ev_start, ev_end = bounds[si], bounds[si + 1]
-            dur_ms = max(1, int(round((ev_end - ev_start) * 1000)))
             first, last = si == 0, si == n_states - 1
-            anim_t = anim(first, last, dur_ms, hide_t, show_t, sx, sy)
             shadow_tags = f"\\xshad{_f(sh_x)}\\yshad{_f(sh_y)}" if style.shadow_on else "\\shad0"
-            for li, idxs in enumerate(lines):
-                parts = []
-                for i in idxs:
-                    txt = blk[i].text
-                    if state is not None and i == state:
-                        parts.append(f"{{\\1c{_bgr(style.highlight_color)}}}{txt}{{\\1c{_bgr(style.fill)}}}")
-                    else:
-                        parts.append(txt)
-                ttags = (
-                    f"{{\\an5{position(x0, line_y[li], dur_ms, last)}\\fsp{_f(spacing)}"
-                    f"\\xbord{_f(xb)}\\ybord{_f(yb)}{shadow_tags}{anim_t}}}"
-                )
-                events.append(f"Dialogue: 1,{_ts(ev_start)},{_ts(ev_end)},Hormozi,,0,0,0,,{ttags}{' '.join(parts)}")
+            for pa, pb in pieces(ev_start, ev_end):
+                dur_ms = max(1, int(round((pb - pa) * 1000)))
+                p_first = first and pa <= ev_start + 1e-6
+                p_last = last and pb >= ev_end - 1e-6
+                wt, wbx, wby = wob(pa, sx, sy)
+                anim_t = anim(p_first, p_last, dur_ms, hide_t, show_t, wbx, wby)
+                for li, idxs in enumerate(lines):
+                    parts = []
+                    for i in idxs:
+                        txt = letters(blk[i].text, int(round((blk[i].start - pa) * 1000)))
+                        if state is not None and i == state:
+                            parts.append(f"{{\\1c{_bgr(style.highlight_color)}}}{txt}{{\\1c{_bgr(style.fill)}}}")
+                        else:
+                            parts.append(txt)
+                    ttags = (
+                        f"{{\\an5{position(x0, line_y[li], dur_ms, p_last)}\\fsp{_f(spacing)}"
+                        f"\\xbord{_f(xb)}\\ybord{_f(yb)}{shadow_tags}{wt}{anim_t}}}"
+                    )
+                    events.append(f"Dialogue: 1,{_ts(pa)},{_ts(pb)},Hormozi,,0,0,0,,{ttags}{' '.join(parts)}")
 
     return header + "\n".join(events) + "\n"
 
@@ -465,18 +537,19 @@ def render_green_video(
     crf: int,
     fonts_dir: Path,
     work_dir: Path,
+    grain: bool = False,
 ):
-    """Dibuja el .ass sobre fondo verde. Archivos relativos a work_dir (evita escapar rutas)."""
+    """Dibuja el .ass sobre fondo azul oscuro. Archivos relativos a work_dir (evita escapar rutas)."""
     c = CODECS[codec_label]
     vf = (
         # La fuente de color nace en RGB: la pasamos a YUV con matriz BT.709 rango TV
-        # para que el verde sea consistente con las etiquetas de color del archivo.
+        # para que el fondo sea consistente con las etiquetas de color del archivo.
         "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p,"
         "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,"
         f"ass={ass_name}:fontsdir='{fonts_dir.resolve().as_posix()}',"
-        f"format={c['pix']}"
+        f"{GRAIN + ',' if grain else ''}format={c['pix']}"
     )
-    cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c={CHROMA_GREEN}:s={width}x{height}:r={fps}:d={duration:.3f}"]
+    cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c={CHROMA_BG}:s={width}x{height}:r={fps}:d={duration:.3f}"]
     if audio_name:
         cmd += ["-i", audio_name]
     cmd += ["-vf", vf, "-r", str(fps), "-fps_mode", "cfr"]
@@ -581,7 +654,7 @@ def preview_block_count(text: str, style: CaptionStyle) -> int:
 def render_preview_png(
     style: CaptionStyle, text: str, fonts_dir: Path, width: int, height: int, block_index: int = 0
 ) -> Tuple[Optional[bytes], str, int]:
-    """Un fotograma PNG de un bloque de subtítulos sobre el fondo verde. Devuelve (png, log, n_bloques)."""
+    """Un fotograma PNG de un bloque de subtítulos sobre el fondo azul oscuro. Devuelve (png, log, n_bloques)."""
     toks = tokenize(text)[:40] or ["Texto", "de", "prueba"]
     words = [Word(t, i * 0.5, i * 0.5 + 0.5) for i, t in enumerate(toks)]
     total = len(words) * 0.5 + 1.0
@@ -593,8 +666,8 @@ def render_preview_png(
         (tmp_dir / "p.ass").write_text(build_ass(words, style, width, height, total, fonts_dir), encoding="utf-8")
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "verbose", "-y",
-            "-f", "lavfi", "-i", f"color=c={CHROMA_GREEN}:s={width}x{height}:r=20:d={t + 0.3:.2f}",
-            "-vf", f"ass=p.ass:fontsdir='{fonts_dir.resolve().as_posix()}'",
+            "-f", "lavfi", "-i", f"color=c={CHROMA_BG}:s={width}x{height}:r=20:d={t + 0.3:.2f}",
+            "-vf", f"ass=p.ass:fontsdir='{fonts_dir.resolve().as_posix()}'" + (f",{GRAIN}" if style.grain else ""),
             "-ss", f"{t:.2f}", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-",
         ]
         r = subprocess.run(cmd, cwd=tmp_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

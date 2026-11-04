@@ -59,6 +59,30 @@ OUTPUT_DIR = BASE_DIR / "output"
 TEMP_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+# --- Caché de configuraciones: se guardan en settings_cache.json y se restauran al abrir la app.
+SETTINGS_FILE = BASE_DIR / "settings_cache.json"
+_NO_CACHE = {"sub_mode", "sub_prev_block", "sub_generate", "sub_download", "sub_text", "sub_audio",
+             "sub_font_files", "sub_result"}
+
+
+def _persistable(k, v=0):
+    return isinstance(k, str) and k.startswith(("sub_", "cfg_")) and k not in _NO_CACHE and isinstance(v, (bool, int, float, str))
+
+
+def _read_cfg():
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+if "_cfg_loaded" not in st.session_state:
+    st.session_state["_cfg_loaded"] = True
+    _saved = {k: v for k, v in _read_cfg().items() if _persistable(k, v)}
+    if _saved:
+        st.session_state.update(_saved)
+        st.rerun()
+
 
 VOICES = {
     "Español (España) - Álvaro (Masculino)": "es-ES-AlvaroNeural",
@@ -202,11 +226,11 @@ user_text = st.text_area("Texto a sintetizar:", value=default_text, height=120)
 
 tc1, tc2, tc3 = st.columns(3)
 with tc1:
-    selected_voice_label = st.selectbox("Voz", list(VOICES.keys()))
+    selected_voice_label = st.selectbox("Voz", list(VOICES.keys()), key="cfg_voice")
 with tc2:
-    speed = st.slider("Velocidad (%)", -50, 50, 0, step=5)
+    speed = st.slider("Velocidad (%)", -50, 50, 0, step=5, key="cfg_speed")
 with tc3:
-    pitch = st.slider("Tono (Hz)", -50, 50, 0, step=5)
+    pitch = st.slider("Tono (Hz)", -50, 50, 0, step=5, key="cfg_pitch")
 
 if st.button("Generar Audio de Voz", use_container_width=True):
     if user_text.strip():
@@ -242,28 +266,28 @@ st.subheader("2. Detección de Audio")
 c1, c2 = st.columns(2)
 with c1:
     noise_db = st.slider(
-        "Umbral de Ruido (dB)", -50, -10, -35,
+        "Umbral de Ruido (dB)", -50, -10, -35, key="cfg_noise",
         help="Más alto (-25 dB): evita falsos positivos por ruido de fondo. Más bajo (-45 dB): detecta susurros o voces suaves.",
     )
 with c2:
     min_silence = st.slider(
-        "Sensibilidad de Detección (s)", 0.05, 0.50, 0.10, step=0.01,
+        "Sensibilidad de Detección (s)", 0.05, 0.50, 0.10, step=0.01, key="cfg_minsil",
         help="Bajo (0.05s): cambio de imagen muy reactivo. Alto (0.25s): evita parpadeos entre sílabas.",
     )
 
 st.subheader("3. Formato y Calidad")
 d1, d2, d3, d4 = st.columns(4)
 with d1:
-    res_label = st.selectbox("Resolución", list(RES_MAP.keys()), index=1)
+    res_label = st.selectbox("Resolución", list(RES_MAP.keys()), index=1, key="cfg_res")
 with d2:
     aspect_label = st.selectbox(
-        "Relación de Aspecto", list(ASPECT_MAP.keys()),
+        "Relación de Aspecto", list(ASPECT_MAP.keys()), key="cfg_aspect",
         help="Escala y centra la imagen automáticamente con padding, sin deformarla.",
     )
 with d3:
-    fps = st.selectbox("FPS", [24, 30, 60], index=1)
+    fps = st.selectbox("FPS", [24, 30, 60], index=1, key="cfg_fps")
 with d4:
-    crf_label = st.selectbox("Calidad", list(CRF_MAP.keys()), index=1)
+    crf_label = st.selectbox("Calidad", list(CRF_MAP.keys()), index=1, key="cfg_crf")
 
 st.subheader("4. Generación")
 generate = st.button("Generar Video", use_container_width=True)
@@ -346,15 +370,15 @@ if generate:
 
 
 # ---------------------------------------------------------------------------
-# 5. Subtítulos estilo Hormozi sobre pantalla verde
+# 5. Subtítulos estilo Hormozi sobre pantalla azul oscura
 # ---------------------------------------------------------------------------
 FONTS_DIR = BASE_DIR / "fonts"
 MAX_DOWNLOAD_MB = 500
 
 st.markdown("---")
-st.subheader("5. Subtítulos estilo Hormozi (pantalla verde)")
+st.subheader("5. Subtítulos estilo Hormozi (pantalla azul oscura)")
 st.caption(
-    "Genera un video con fondo verde (#00FF00) y subtítulos palabra por palabra, listo para "
+    "Genera un video con fondo azul oscuro (#00008B) y subtítulos palabra por palabra, listo para "
     "aplicar Ultra Key en Premiere Pro y colocarlo sobre tu metraje."
 )
 
@@ -426,6 +450,8 @@ with ctrl_col:
     OTHER_FONT = "Otra (escribir el nombre)..."
     font_options = bundled_fonts + other_fonts + [OTHER_FONT]
     default_font = next((f for f in ("Georgia", "Gelasio") if f in font_options), font_options[0])
+    if st.session_state.get("sub_font") not in font_options:
+        st.session_state.pop("sub_font", None)  # fuente guardada que ya no existe
     sub_font_choice = st.selectbox("Fuente", font_options, index=font_options.index(default_font), key="sub_font")
     if sub_font_choice == OTHER_FONT:
         sub_font_family = st.text_input(
@@ -476,6 +502,19 @@ with ctrl_col:
     with e2:
         sub_chars = st.slider("Máx. caracteres por línea", 6, 24, 10, key="sub_chars")
     sub_exit_label = st.selectbox("Animación de salida", list(EXIT_STYLES.keys()), key="sub_exit")
+    an1, an2 = st.columns(2)
+    with an1:
+        sub_letters = st.checkbox("Animar letras alternas (1 s)", value=True, key="sub_letters")
+    with an2:
+        sub_wobble = st.checkbox("Vaivén del recuadro cada 0,5 s (±2 px)", value=True, key="sub_wobble")
+    st.markdown("##### Estilo cartel (SADE · SUPER STAR · INTI-NET)")
+    ps1, ps2, ps3 = st.columns(3)
+    with ps1:
+        sub_poster = st.checkbox("Estilo cartel serif", value=False, key="sub_poster")
+    with ps2:
+        sub_invert = st.checkbox("Invertir colores", value=False, key="sub_invert", disabled=not sub_poster)
+    with ps3:
+        sub_grain = st.checkbox("Granulado", value=False, key="sub_grain")
     h1, h2 = st.columns([3, 1])
     with h1:
         sub_highlight = st.checkbox("Resaltar palabra activa", value=True, key="sub_hl")
@@ -526,6 +565,7 @@ sub_style = CaptionStyle(
     scale_x=sub_sx, scale_y=sub_sy, tracking=sub_track, leading=sub_lead, pos_x=sub_px, pos_y=sub_py,
     words_per_block=sub_words, max_chars_line=sub_chars,
     highlight=sub_highlight, highlight_color=sub_hl_color, exit_style=EXIT_STYLES[sub_exit_label],
+    letter_anim=sub_letters, wobble=sub_wobble, poster=sub_poster, invert=sub_invert, grain=sub_grain,
 )
 
 # Previsualización en tiempo real: Streamlit vuelve a ejecutar el script al tocar cualquier control
@@ -544,7 +584,7 @@ with preview_slot:
     pw, ph = int(pw * pscale) // 2 * 2, int(ph * pscale) // 2 * 2
     prev_png, prev_log, _ = cached_preview(json.dumps(asdict(sub_style)), sub_text, str(sub_fonts_dir), pw, ph, prev_block)
     if prev_png:
-        st.image(prev_png, caption="Fondo verde #00FF00. Se actualiza al instante al cambiar cualquier control.")
+        st.image(prev_png, caption="Fondo azul oscuro #00008B. Se actualiza al instante al cambiar cualquier control.")
     else:
         st.error("No se pudo generar la previsualización.")
         st.code(prev_log[-1500:])
@@ -604,6 +644,7 @@ if st.button("Generar video con subtítulos", use_container_width=True, key="sub
             res = render_green_video(
                 "captions.ass", audio_path.name if sub_include_audio else None, out_name,
                 width, height, sub_fps, total, sub_codec, CRF_MAP[sub_crf_label], sub_fonts_dir, sub_dir,
+                grain=style.grain,
             )
             out_path = sub_dir / out_name
             if out_path.exists() and out_path.stat().st_size > 0:
@@ -641,3 +682,13 @@ if "sub_result" in st.session_state:
         mime="video/mp4" if r["ext"] == "mp4" else "video/quicktime", use_container_width=True,
         key="sub_download",
     )
+
+
+# Guarda las configuraciones actuales (se combinan con las ya guardadas) para la próxima visita.
+_cur = {k: v for k, v in st.session_state.items() if _persistable(k, v)}
+_old = _read_cfg()
+if _cur and {**_old, **_cur} != _old:
+    try:
+        SETTINGS_FILE.write_text(json.dumps({**_old, **_cur}, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
