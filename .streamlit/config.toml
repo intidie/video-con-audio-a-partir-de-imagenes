@@ -1,0 +1,17 @@
+# Configuración pensada para ejecutar la app en local, gastando lo mínimo.
+[server]
+headless = true
+fileWatcherType = "none"      # no vigila archivos: menos CPU en reposo
+runOnSave = false
+maxUploadSize = 1024          # MB (audios e imágenes grandes)
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = "none"
+
+[theme]
+base = "light"
