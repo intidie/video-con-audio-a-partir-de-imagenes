@@ -2,10 +2,9 @@
 temp/
 output/
 __pycache__/
-filelist.txt
+ajustes.json
+settings_cache.json
 *.mp4
+*.mov
 *.mp3
 *.wav
-*.png
-*.jpg
-settings_cache.json

@@ -1,4 +1,4 @@
 streamlit>=1.38
 edge-tts>=7.0.0
-pyttsx3
 fonttools
+pillow
