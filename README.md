@@ -3,7 +3,16 @@
 Genera un video con subtítulos palabra por palabra sobre pantalla azul oscura (#00008B), listo para aplicar
 **Ultra Key** en Premiere Pro. Pensado para ejecutarse **en local**, como una app de escritorio.
 
-## Uso
+## Instalar como aplicación (Windows 11)
+1. Instala **Python 3.10+** y **FFmpeg** (`winget install ffmpeg`).
+2. Doble clic en `instalar.bat`: crea el entorno, instala todo y genera el acceso directo **Subtitulos Cartel**
+   (en la carpeta y en el Escritorio).
+3. Clic derecho en el acceso directo > *Mostrar más opciones* > **Anclar a la barra de tareas**.
+
+Se abre en su propia ventana (Edge/Chrome en modo aplicación, sin pestañas) y **al cerrarla se apaga el servidor**,
+sin dejar nada consumiendo recursos.
+
+## Uso alternativo (consola)
 1. Instala **Python 3.10+** y **FFmpeg** (Windows: `winget install ffmpeg`).
 2. Doble clic en `iniciar.bat` (Windows) o `./iniciar.sh` (Linux/macOS). La primera vez instala las dependencias.
 3. Pega el guion, ajusta el estilo con la previsualización y pulsa **Generar video con subtítulos**.

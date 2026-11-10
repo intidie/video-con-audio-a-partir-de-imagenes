@@ -251,6 +251,22 @@ v1.selectbox("Voz", OPTIONS["voice"], key="voice")
 v2.slider("Velocidad (%)", -50, 50, step=5, key="speed")
 v3.slider("Tono (Hz)", -50, 50, step=5, key="pitch")
 
+if st.button("Generar audio de voz (solo MP3)", key="gen_audio"):
+    if not ss["script"].strip():
+        st.error("Escribe el guion arriba.")
+    else:
+        try:
+            with st.spinner("Generando voz..."):
+                mp3 = cached_tts(ss["script"].strip(), VOICES[ss["voice"]], f"{ss['speed']:+d}%", f"{ss['pitch']:+d}Hz")[0]
+            apath = unique_path(OUTPUT_DIR, name_from_text(ss["script"]), "mp3")
+            apath.write_bytes(mp3)
+            ss["audio_result"] = str(apath)
+        except Exception as exc:
+            st.error(f"No se pudo generar la voz (¿hay conexión a internet?): {exc}")
+if ss.get("audio_result") and Path(ss["audio_result"]).exists():
+    st.audio(ss["audio_result"])
+    st.caption(f"Guardado en: {ss['audio_result']}")
+
 tab_sub, tab_ls = st.tabs(["Subtítulos", "Lip-sync (PNGtuber)"])
 
 # --------------------------------------------------------------------------- #

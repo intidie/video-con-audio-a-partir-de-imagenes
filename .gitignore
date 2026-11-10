@@ -1,4 +1,7 @@
 .venv/
+.perfil/
+temp_servidor.log
+*.lnk
 temp/
 output/
 __pycache__/

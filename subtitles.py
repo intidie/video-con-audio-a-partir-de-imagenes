@@ -598,6 +598,11 @@ def build_ass(
 # --------------------------------------------------------------------------- #
 # Filtros y render (paralelo por trozos)
 # --------------------------------------------------------------------------- #
+def ff_escape(path: str) -> str:
+    """Escapa una ruta para un filtro de FFmpeg (en Windows `C:/...` rompía el parseo por los dos puntos)."""
+    return "".join(("\\\\" + c) if c in ":'" else ("\\" + c) if c in ",;[]=" else c for c in path)
+
+
 def make_vf(width: int, height: int, pix: str, fonts_dir: Path, cap: Captions, style: CaptionStyle, t0: float = 0.0) -> str:
     """Cadena de filtros: .ass -> (mosaico en la franja del subtítulo) -> (granulado) -> formato final."""
     work = "yuv420p" if pix == "yuv420p" else "yuv444p"
@@ -606,7 +611,7 @@ def make_vf(width: int, height: int, pix: str, fonts_dir: Path, cap: Captions, s
         + [
             "scale=out_color_matrix=bt709:out_range=tv", f"format={work}",
             "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
-            f"ass=c.ass:fontsdir='{fonts_dir.resolve().as_posix()}'",
+            f"ass=c.ass:fontsdir={ff_escape(fonts_dir.resolve().as_posix())}",
         ]
     )
     # Mosaico y granulado se aplican solo a la franja que contiene el subtítulo (el resto de la pantalla no se toca).
