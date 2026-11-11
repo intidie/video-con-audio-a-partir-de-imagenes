@@ -17,7 +17,9 @@ sin dejar nada consumiendo recursos.
 2. Doble clic en `iniciar.bat` (Windows) o `./iniciar.sh` (Linux/macOS). La primera vez instala las dependencias.
 3. Pega el guion, ajusta el estilo con la previsualización y pulsa **Generar video con subtítulos**.
 
-El video se guarda en `output/` con las **3 primeras palabras del guion** como nombre (`hola_amigos_que.mp4`).
+El video se guarda con las **3 primeras palabras del guion** como nombre (`hola_amigos_que.mp4`) en `output/` o en la
+**carpeta de salida** que elijas arriba de las pestañas (botón **Examinar…** o escribiendo la ruta; se crea si no existe
+y se recuerda en `ajustes.json`).
 
 ## Qué hay
 - **Estilo cartel serif + Bebas Neue** por defecto, con los valores de Premiere (escala, tracking, posición...).

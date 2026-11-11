@@ -62,6 +62,7 @@ DEFAULTS = {
     "crf": "Máxima (CRF 18)", "inc_audio": True,
     "ls_noise": -35, "ls_minsil": 0.10, "ls_res": "1080p Full HD (1920x1080)", "ls_aspect": "16:9 (Horizontal)",
     "ls_fps": 30, "ls_crf": "Alta (CRF 23)",
+    "out_dir": "",  # carpeta de salida; vacío = la carpeta output/ de la app
 }
 OPTIONS = {
     "voice": list(VOICES), "src_mode": [SRC_TTS, SRC_UPLOAD], "entry": list(ENTRY_STYLES), "exit": list(EXIT_STYLES),
@@ -213,6 +214,46 @@ def open_folder(path: Path) -> None:
         pass
 
 
+def resolve_out_dir(create: bool = True) -> Path:
+    """Carpeta elegida para guardar los resultados (vacía = output/). Se crea si no existe."""
+    raw = (ss.get("out_dir") or "").strip().strip('"')
+    if not raw:
+        return OUTPUT_DIR
+    d = Path(os.path.expandvars(raw)).expanduser()
+    if not d.is_absolute():
+        d = BASE_DIR / d
+    if create:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError(f"No se pudo crear la carpeta de salida «{d}»: {exc}") from exc
+        if not os.access(d, os.W_OK):
+            raise RuntimeError(f"No hay permiso de escritura en la carpeta de salida «{d}».")
+    return d
+
+
+def browse_out_dir() -> None:
+    """Abre el selector de carpetas del sistema (tkinter, en un proceso aparte para no bloquear Streamlit)."""
+    code = (
+        "import sys, tkinter as tk\nfrom tkinter import filedialog\n"
+        "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+        "print(filedialog.askdirectory(initialdir=sys.argv[1] or None, title='Carpeta de salida') or '')\n"
+    )
+    ss.pop("_browse_err", None)
+    try:
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0  # type: ignore[attr-defined]
+        r = subprocess.run([sys.executable, "-c", code, str(resolve_out_dir(create=False))],
+                           capture_output=True, text=True, timeout=600, creationflags=flags)
+    except Exception as exc:
+        ss["_browse_err"] = str(exc)
+        return
+    chosen = r.stdout.strip()
+    if chosen:
+        ss["out_dir"] = str(Path(chosen))
+    elif r.returncode != 0:
+        ss["_browse_err"] = "El selector de carpetas no está disponible aquí; escribe la ruta a mano."
+
+
 def show_result(key: str) -> None:
     r = ss.get(f"result_{key}")
     if not r or not Path(r["path"]).exists():
@@ -258,7 +299,7 @@ if st.button("Generar audio de voz (solo MP3)", key="gen_audio"):
         try:
             with st.spinner("Generando voz..."):
                 mp3 = cached_tts(ss["script"].strip(), VOICES[ss["voice"]], f"{ss['speed']:+d}%", f"{ss['pitch']:+d}Hz")[0]
-            apath = unique_path(OUTPUT_DIR, name_from_text(ss["script"]), "mp3")
+            apath = unique_path(resolve_out_dir(), name_from_text(ss["script"]), "mp3")
             apath.write_bytes(mp3)
             ss["audio_result"] = str(apath)
         except Exception as exc:
@@ -266,6 +307,15 @@ if st.button("Generar audio de voz (solo MP3)", key="gen_audio"):
 if ss.get("audio_result") and Path(ss["audio_result"]).exists():
     st.audio(ss["audio_result"])
     st.caption(f"Guardado en: {ss['audio_result']}")
+
+o1, o2 = st.columns([6, 1.4], vertical_alignment="bottom")
+o1.text_input("Carpeta de salida de los videos y audios", key="out_dir",
+              placeholder=f"Vacío = {OUTPUT_DIR}  ·  ej.: D:\\Videos\\Reels",
+              help="Aquí se guarda cada archivo generado. Si no existe, se crea. Se recuerda para la próxima vez.")
+o2.button("Examinar…", on_click=browse_out_dir, use_container_width=True)
+if ss.get("_browse_err"):
+    st.warning(ss["_browse_err"])
+st.caption(f"Se guardará en: {resolve_out_dir(create=False)}")
 
 tab_sub, tab_ls = st.tabs(["Subtítulos", "Lip-sync (PNGtuber)"])
 
@@ -447,7 +497,7 @@ with tab_sub:
                 total = get_duration(audio_path) + 0.4
                 width, height = target_dims(ss["res"], ss["aspect"])
                 codec = CODECS[ss["codec"]]
-                final = unique_path(OUTPUT_DIR, name_from_text(text), codec["ext"])
+                final = unique_path(resolve_out_dir(), name_from_text(text), codec["ext"])
                 t0 = time.time()
                 ok, err = render_captions(
                     words, style_from_state(), width, height, ss["fps"], ss["codec"], CRF_MAP[ss["crf"]],
@@ -518,7 +568,7 @@ with tab_ls:
                     return paths
 
                 w, h = target_dims(ss["ls_res"], ss["ls_aspect"])
-                final = unique_path(OUTPUT_DIR, name_from_text(text, fallback="lipsync") + "_lipsync", "mp4")
+                final = unique_path(resolve_out_dir(), name_from_text(text, fallback="lipsync") + "_lipsync", "mp4")
                 ok, err, n_seg = make_lipsync(
                     audio_path, save_imgs(talking, "t"), save_imgs(silent, "s"), work / "out.mp4", work, w, h,
                     ss["ls_fps"], CRF_MAP[ss["ls_crf"]], ss["ls_noise"], ss["ls_minsil"],
