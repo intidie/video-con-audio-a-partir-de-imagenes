@@ -27,6 +27,62 @@ def run(cmd: Sequence[str], cwd: Optional[Path] = None) -> subprocess.CompletedP
     return subprocess.run(list(cmd), cwd=cwd, capture_output=True, text=True)
 
 
+# --------------------------------------------------------------------------- #
+# Limpieza de metadatos del video final
+# --------------------------------------------------------------------------- #
+# Flags para el paso de CODIFICACIÓN: evitan que FFmpeg escriba su "firma" (etiqueta encoder=Lavf/Lavc y la versión
+# del codificador AAC, que va dentro del primer frame de audio y no se puede quitar después sin recodificar).
+BITEXACT_FLAGS = ["-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact"]
+
+
+def _video_codec(path: Path) -> str:
+    r = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name",
+             "-of", "csv=p=0", str(path)])
+    return r.stdout.strip()
+
+
+def strip_metadata(path: Path) -> bool:
+    """Elimina metadatos del video ya renderizado, SIN recodificar (copia de streams, no pierde calidad).
+
+    Quita: etiquetas globales y por pista (encoder, creation_time, comment...), capítulos, nombres de handler
+    (se dejan genéricos) y el SEI de x264 (la cadena "x264 - core ... options" que se incrusta en el bitstream).
+    Si `exiftool` está en el PATH, pasa además `exiftool -all=` para borrar lo que quede (equivale a ExifCleaner,
+    que es una interfaz gráfica sobre exiftool). Devuelve True si el archivo quedó limpio y es válido; si algo
+    falla, deja el original intacto y devuelve False.
+    """
+    path = Path(path)
+    if not path.exists():
+        return False
+    tmp = path.with_name(f"{path.stem}.limpio{path.suffix}")
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path),
+        "-map", "0:v", "-map", "0:a?", "-c", "copy",
+        "-map_metadata", "-1", "-map_metadata:s:v", "-1", "-map_metadata:s:a", "-1", "-map_chapters", "-1",
+        *BITEXACT_FLAGS,
+        "-metadata:s:v:0", "handler_name=Video", "-metadata:s:a:0", "handler_name=Audio",
+    ]
+    if _video_codec(path) == "h264":
+        cmd += ["-bsf:v", "filter_units=remove_types=6"]          # NAL tipo 6 = SEI (aquí vive la firma de x264)
+    if path.suffix.lower() in (".mp4", ".mov", ".m4v"):
+        cmd += ["-movflags", "+faststart"]
+    cmd.append(str(tmp))
+    try:
+        r = run(cmd)
+        if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+            return False
+        if run(["ffmpeg", "-v", "error", "-i", str(tmp), "-f", "null", "-"]).stderr.strip():
+            return False                                          # el resultado no decodifica limpio: no lo uses
+        if shutil.which("exiftool"):
+            run(["exiftool", "-q", "-overwrite_original", "-all=", str(tmp)])
+            if run(["ffmpeg", "-v", "error", "-i", str(tmp), "-f", "null", "-"]).stderr.strip():
+                return False
+        os.replace(tmp, path)
+        return True
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
 def get_duration(path: Path) -> float:
     r = run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)])
     return float(r.stdout.strip())
@@ -113,8 +169,12 @@ def make_lipsync(
     r = run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "filelist.txt", "-i", str(audio),
         "-r", str(fps), "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-        "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", "-shortest", str(out_path),
+        "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", *BITEXACT_FLAGS, "-map_metadata", "-1",
+        "-shortest", str(out_path),
     ], cwd=work_dir)
-    say(1.0, "Listo")
     ok = out_path.exists() and out_path.stat().st_size > 0
+    if ok:
+        say(0.97, "Limpiando metadatos")
+        strip_metadata(out_path)
+    say(1.0, "Listo")
     return ok, r.stderr[-3000:], len(segments)

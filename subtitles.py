@@ -24,6 +24,8 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import edge_tts
 
+from media import BITEXACT_FLAGS, strip_metadata
+
 TICKS_PER_SECOND = 10_000_000  # edge-tts entrega offsets en unidades de 100 ns
 REF_W, REF_H = 1080, 1920      # fotograma de referencia de las capturas de Premiere
 AUTO_LEADING = 1.2             # interlineado automático de Premiere (x tamaño)
@@ -700,11 +702,15 @@ def render_captions(
     if audio:
         cmd += ["-i", str(audio)]
     cmd += ["-map", "0:v"] + (["-map", "1:a", *c["audio"]] if audio else []) + ["-c:v", "copy", *c["extra"]]
-    cmd += ["-t", f"{total:.3f}", str(out_path)]
+    cmd += [*BITEXACT_FLAGS, "-map_metadata", "-1", "-t", f"{total:.3f}", str(out_path)]
     r = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
+    ok = r.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
+    if ok:
+        if progress:
+            progress(0.98, "Limpiando metadatos")
+        strip_metadata(out_path)          # sin recodificar: quita encoder, handlers y el SEI de x264
     if progress:
         progress(1.0, "Listo")
-    ok = r.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
     return ok, r.stderr[-3000:]
 
 

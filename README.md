@@ -28,6 +28,17 @@ y se recuerda en `ajustes.json`).
 - **Visor de animaciones**: control de «instante» cuadro a cuadro y botón ▶ para ver el clip en movimiento.
 - Los ajustes se guardan en `ajustes.json`; «Restablecer valores» vuelve a los de fábrica.
 
+## Limpieza automática de metadatos
+Todo video exportado (subtítulos y lip-sync, en H.264, ProRes y DNxHR) pasa por `media.strip_metadata()`, **sin
+recodificar** (no pierde calidad). Elimina las huellas que deja FFmpeg: etiquetas `encoder` (Lavf/Lavc), `creation_time`,
+capítulos, nombres de handler y el SEI de x264 (`x264 - core ... options`), y evita que el codificador AAC escriba su
+versión en el audio. Si tienes `exiftool` en el PATH (es lo que usa ExifCleaner por debajo), se aplica además
+`exiftool -all=`. Si algo falla, se conserva el video original intacto.
+
+> Ojo: esto limpia lo que genera **esta app**. Si luego editas el video (Premiere, CapCut, etc.) o usas herramientas
+> con IA, esas apps pueden añadir sus propias marcas (p. ej. Content Credentials / C2PA) al exportar; revisa su
+> configuración de exportación.
+
 ## Rendimiento (por qué ya no se cuelga)
 - El video se parte en trozos que se renderizan **en paralelo** (un FFmpeg por núcleo, con prioridad baja)
   y se unen sin recodificar; con barra de progreso real.
