@@ -11,3 +11,5 @@ settings_cache.json
 *.mov
 *.mp3
 *.wav
+fonts/StampRSPK*
+fonts/LICENSE-StampRSPK.txt
