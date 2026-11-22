@@ -1,12 +1,12 @@
 # Subtítulos estilo cartel (y lip-sync PNGtuber)
 
 <p align="center">
-  <a href="https://github.com/intidie/video-con-audio-a-partir-de-imagenes/releases/latest/download/Instalar-Subtitulos-Cartel.bat">
+  <a href="https://github.com/intidie/video-con-audio-a-partir-de-imagenes/archive/refs/heads/main.zip">
     <img alt="Descargar para Windows 11" src="https://img.shields.io/badge/%E2%AC%87%20Descargar%20para%20Windows%2011-Instalador-0078D4?style=for-the-badge&logo=windows11&logoColor=white" height="48">
   </a>
 </p>
 
-**Instalación en un clic (Windows 11):** pulsa el botón, abre `Instalar-Subtitulos-Cartel.bat` y espera. Instala Python,
+**Instalación en un clic (Windows 11):** pulsa el botón (descarga un ZIP), descomprímelo, abre `Instalar-Subtitulos-Cartel.bat` y espera. Instala Python,
 FFmpeg y Node.js si faltan (con `winget`), descarga la app, crea el acceso directo **Subtitulos Cartel** y la abre.
 Para actualizar, vuelve a ejecutarlo (se conservan tus ajustes). Si Windows avisa de «SmartScreen»: *Más información > Ejecutar de todos modos*.
 
