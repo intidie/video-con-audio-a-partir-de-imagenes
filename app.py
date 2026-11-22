@@ -24,6 +24,7 @@ from subtitles import (
     render_captions, render_preview_clip, render_preview_png, synthesize_with_timings, system_font_families,
     tokenize, unique_path,
 )
+from robot_tts import ROBOT_VOICES
 
 st.set_page_config(page_title="Subtítulos estilo cartel", page_icon="🎬", layout="wide")
 
@@ -40,6 +41,7 @@ VOICES = {
     "Español (México) - Dalia (Femenino)": "es-MX-DaliaNeural",
     "Español (Colombia) - Gonzalo (Masculino)": "es-CO-GonzaloNeural",
     "Español (Colombia) - Salome (Femenino)": "es-CO-SalomeNeural",
+    **ROBOT_VOICES,   # voces robóticas de meSpeak.js (sin internet; requieren Node.js)
 }
 SRC_TTS = "Generar voz con TTS (tiempos exactos por palabra)"
 SRC_UPLOAD = "Subir un audio (tiempos estimados)"
@@ -56,7 +58,8 @@ DEFAULTS = {
     "words": 1, "chars": 10, "entry": "Pop: crece", "exit": "Sin animación de salida",
     "motion": "Sin movimiento continuo", "in_ms": 110, "out_ms": 160, "letters": True, "wobble": True,
     "mosaic": "Sin mosaico", "mosaic_px": 36, "mosaic_ms": 300,
-    "poster": True, "invert": False, "grain": False, "hl": True, "hl_color": "#FFE600",
+    "poster": True, "invert": False, "grain": False,
+    "meme": False, "meme_q": 35, "meme_cond": 80, "hl": True, "hl_color": "#FFE600",
     "sx": 135.0, "sy": 308.0, "track": -55.0, "lead": -54.0, "px": 535.1, "py": 500.0,
     "res": "2K (2560x1440)", "aspect": "9:16 (Vertical)", "fps": 60, "codec": FIRST_CODEC,
     "crf": "Máxima (CRF 18)", "inc_audio": True,
@@ -191,6 +194,7 @@ def style_from_state() -> CaptionStyle:
         in_ms=ss["in_ms"], out_ms=ss["out_ms"], letter_anim=ss["letters"], wobble=ss["wobble"],
         mosaic=MOSAIC_MODES[ss["mosaic"]], mosaic_px=ss["mosaic_px"], mosaic_ms=ss["mosaic_ms"],
         poster=ss["poster"], invert=ss["invert"], grain=ss["grain"],
+        meme=ss["meme"], meme_quality=ss["meme_q"], meme_condense=ss["meme_cond"],
     )
 
 
@@ -360,7 +364,7 @@ with tab_sub:
                 st.checkbox("Subrayado", key="underline")
             with t5:
                 st.checkbox("MAYÚSCULAS", key="upper")
-            if ss["poster"]:
+            if ss["poster"] and not ss["meme"]:
                 st.caption("Con «Estilo cartel» activo se ignoran: negrita, cursiva, mayúsculas, relleno, trazo, "
                            "fondo, sombra, escalas, tracking, interlineado y resaltado (los fija el cartel).")
 
@@ -405,6 +409,15 @@ with tab_sub:
             ps1.checkbox("Estilo cartel serif", key="poster")
             ps2.checkbox("Invertir colores", key="invert", disabled=not ss["poster"])
             ps3.checkbox("Granulado", key="grain")
+            st.markdown("##### Estilo meme (texto simple, baja calidad)")
+            st.checkbox("Estilo meme: texto repartido por toda la pantalla y de baja calidad", key="meme")
+            if ss["meme"]:
+                me1, me2 = st.columns(2)
+                me1.slider("Calidad (más bajo = más borroso)", 5, 100, key="meme_q")
+                me2.slider("Ancho de letra (%)", 50, 120, key="meme_cond")
+                st.caption("Usa «Rellenar» para el color de la letra y «Fondo» para el recuadro y su color "
+                           "(activa «Fondo» para verlo). Sugerencia: palabras por bloque 4-6, máx. caracteres 12-16, "
+                           "y una fuente condensada (p. ej. Arial Narrow / Liberation Sans Narrow).")
             h1, h2 = st.columns([3, 1])
             h1.checkbox("Resaltar palabra activa", key="hl")
             h2.color_picker("Color del resaltado", key="hl_color", disabled=not ss["hl"], label_visibility="collapsed")

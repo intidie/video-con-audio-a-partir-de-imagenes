@@ -21,6 +21,14 @@ El video se guarda con las **3 primeras palabras del guion** como nombre (`hola_
 **carpeta de salida** que elijas arriba de las pestañas (botón **Examinar…** o escribiendo la ruta; se crea si no existe
 y se recuerda en `ajustes.json`).
 
+## Voz robótica (meSpeak.js) y estilo meme
+- **Voces «Robot (meSpeak)»** en el selector de voz: usan `mespeak/mespeak-core.js` (eSpeak en JavaScript) ejecutado con
+  **Node.js** (`winget install OpenJS.NodeJS.LTS`), sin internet. Cada palabra se sintetiza por separado, así los tiempos
+  de los subtítulos son exactos. Velocidad y tono usan los mismos sliders. Voces/variantes en `robot_tts.py`
+  (puedes copiar más `.json` de voces a `mespeak/voices/`).
+- **Estilo meme** (pestaña de estilo): texto simple, palabras repartidas de borde a borde, líneas apretadas y de baja
+  calidad (slider de calidad y ancho de letra). Color de letra = «Rellenar»; recuadro opcional y su color = «Fondo».
+
 ## Qué hay
 - **Estilo cartel serif + Bebas Neue** por defecto, con los valores de Premiere (escala, tracking, posición...).
 - **Animaciones** de entrada (pop, rebote, zoom, giro, desliza, cae, parpadeo, letras en cascada), de salida

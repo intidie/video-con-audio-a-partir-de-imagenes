@@ -138,6 +138,10 @@ class CaptionStyle:
     poster: bool = True
     invert: bool = False
     grain: bool = False
+    # Estilo meme: texto simple repartido por toda la pantalla y degradado (baja calidad)
+    meme: bool = False
+    meme_quality: float = 35.0     # 5-100 %: cuanto menor, más pixelado / borroso
+    meme_condense: float = 80.0    # ancho de letra (%), 100 = normal
 
 
 @dataclass
@@ -203,7 +207,10 @@ async def _tts_stream(text, voice, rate, pitch, boundary, out_path):
 
 
 def synthesize_with_timings(text: str, voice: str, rate: str, pitch: str, out_path: Path) -> Tuple[List[Word], str]:
-    """Genera el MP3 con edge-tts y devuelve (palabras con tiempos, modo "exacto" | "por frases")."""
+    """Genera el MP3 (edge-tts o meSpeak) y devuelve (palabras con tiempos, modo "exacto" | "por frases")."""
+    from robot_tts import is_robot, synthesize_robot   # import tardío: robot_tts importa este módulo
+    if is_robot(voice):
+        return synthesize_robot(text, voice, rate, pitch, out_path)
     tokens = tokenize(text)
     events = asyncio.run(_tts_stream(text, voice, rate, pitch, "WordBoundary", str(out_path)))
     words = [
@@ -227,11 +234,11 @@ def synthesize_with_timings(text: str, voice: str, rate: str, pitch: str, out_pa
 # --------------------------------------------------------------------------- #
 # Bloques y ASS
 # --------------------------------------------------------------------------- #
-def make_blocks(words: Sequence[Word], per_block: int, uppercase: bool) -> List[List[Word]]:
+def make_blocks(words: Sequence[Word], per_block: int, uppercase: bool, commas: bool = True) -> List[List[Word]]:
     blocks, cur = [], []
     for w in words:
         cur.append(Word(w.text.upper() if uppercase else w.text, w.start, w.end))
-        if len(cur) >= per_block or re.search(r"[.!?…,;:]$", cur[-1].text):
+        if len(cur) >= per_block or re.search(r"[.!?…,;:]$" if commas else r"[.!?…]$", cur[-1].text):
             blocks.append(cur)
             cur = []
     if cur:
@@ -350,10 +357,92 @@ def effect_commands(spans: Sequence[Tuple[float, float]], style: CaptionStyle, k
     return "".join(f"{t:.3f} {c};\n" for t, c in lines)
 
 
+def build_ass_meme(words: Sequence[Word], style: CaptionStyle, width: int, height: int, total_duration: float,
+                   fonts_dir: Optional[Path] = None) -> Captions:
+    """Estilo meme: líneas apretadas, palabras repartidas de borde a borde de la pantalla, sin animación."""
+    cond = max(30.0, style.meme_condense) / 100.0
+    fm = get_font_metrics(style.font_family, style.bold, style.italic, fonts_dir)
+    margin = 0.04 * width
+    avail = width - 2 * margin
+    flags = f"{-1 if style.bold else 0},{-1 if style.italic else 0},0,0"
+    blocks = make_blocks(words, max(1, style.words_per_block), style.uppercase, not style.meme)
+    events: List[str] = []
+    spans: List[Tuple[float, float]] = []
+    y_min, y_max = float("inf"), float("-inf")
+    a_box = _opacity_to_alpha(style.box_opacity)
+    size_ref = 0.0
+    for bi, blk in enumerate(blocks):
+        b_start = blk[0].start
+        b_end = blk[-1].end + 0.20
+        if bi + 1 < len(blocks):
+            b_end = min(b_end, blocks[bi + 1][0].start)
+        b_end = min(max(b_end, b_start + 0.25), total_duration)
+        spans.append((b_start, b_end))
+
+        lines = wrap_lines(blk, max(style.max_chars_line, 1))
+        wid = lambda t, s: text_width_em(fm, t) * s * cond            # ancho en px de t con tamaño s
+        # Tamaño: que la línea más ancha (con espacios normales) llene la pantalla; tope por alto.
+        nat = max(wid(" ".join(blk[i].text for i in idx), 1.0) for idx in lines) or 1.0
+        size = min(avail / nat, 0.30 * height, 0.85 * height / (len(lines) * 0.95))
+        pitch = size * (fm.cap_top + fm.desc_bottom + 0.10)           # líneas muy juntas
+        y0 = height / 2.0
+        line_y = [y0 + (li - (len(lines) - 1) / 2.0) * pitch for li in range(len(lines))]
+        s_pt = size * fm.cell
+        top = line_y[0] + (fm.ascent - fm.cell / 2.0) * size - fm.cap_top * size
+        bottom = line_y[-1] + (fm.ascent - fm.cell / 2.0) * size + fm.desc_bottom * size
+        pad = style.box_pad * min(width, height) / 1080.0
+        if style.box_on:
+            top, bottom = top - pad, bottom + pad
+        y_min, y_max = min(y_min, top - 0.02 * height), max(y_max, bottom + 0.02 * height)
+
+        if style.box_on:
+            x0b = margin - pad
+            events.append(
+                f"Dialogue: 0,{_ts(b_start)},{_ts(b_end)},Meme,,0,0,0,,{{\\an7\\pos({_f(x0b)},{_f(top)})\\bord0\\shad0"
+                f"\\p1\\1c{_bgr(style.box_color)}\\1a{_alpha_tag(a_box)}}}"
+                f"{_rounded_rect(avail + 2 * pad, bottom - top, style.box_radius)}{{\\p0}}"
+            )
+        for li, idx in enumerate(lines):
+            ws = [blk[i].text for i in idx]
+            sizes = [wid(t, size) for t in ws]
+            if len(ws) == 1:
+                xs = [margin]
+            else:                                                    # reparte el espacio sobrante entre palabras
+                gap = (avail - sum(sizes)) / (len(ws) - 1)
+                xs, cur = [], margin
+                for s_ in sizes:
+                    xs.append(cur)
+                    cur += s_ + gap
+            for t, x in zip(ws, xs):
+                events.append(
+                    f"Dialogue: 1,{_ts(b_start)},{_ts(b_end)},Meme,,0,0,0,,"
+                    f"{{\\an4\\pos({_f(x)},{_f(line_y[li])})\\fs{_f(s_pt)}\\fscx{_f(cond * 100)}}}{t}"
+                )
+        size_ref = max(size_ref, s_pt)
+    header = (
+        "[Script Info]\nScriptType: v4.00+\n"
+        f"PlayResX: {width}\nPlayResY: {height}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Meme,{style.font_family},{_f(size_ref or 40)},{_ass_col(style.fill, 0 if style.fill_on else 255)},"
+        f"&H000000FF,&H00000000,&H00000000,{flags},100,100,0,0,1,0,0,7,0,0,0,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    if y_min > y_max:
+        y_min, y_max = 0.0, float(height)
+    by0 = max(0, int(y_min)) // 2 * 2
+    bh = max(2, (min(height, int(math.ceil(y_max))) - by0) // 2 * 2)
+    return Captions(header + "\n".join(events) + "\n", spans, (by0, bh), "")
+
+
 def build_ass(
     words: Sequence[Word], style: CaptionStyle, width: int, height: int, total_duration: float,
     fonts_dir: Optional[Path] = None,
 ) -> Captions:
+    if style.meme:
+        return build_ass_meme(words, style, width, height, total_duration, fonts_dir)
     style = apply_poster(style)
     k = min(width, height) / 1080.0
     sx, sy = style.scale_x, style.scale_y
@@ -493,7 +582,7 @@ def build_ass(
             out.append(f"{{{tg}}}{ch}" + (f"{{\\fs{_f(fs_base)}}}" if grow else "") if tg else ch)
         return "".join(out)
 
-    blocks = make_blocks(words, max(1, style.words_per_block), style.uppercase)
+    blocks = make_blocks(words, max(1, style.words_per_block), style.uppercase, not style.meme)
     events: List[str] = []
     spans: List[Tuple[float, float]] = []
     y_min, y_max = float("inf"), float("-inf")
@@ -624,7 +713,12 @@ def make_vf(width: int, height: int, pix: str, fonts_dir: Path, cap: Captions, s
         chain.append(f"pixelize=w={s}:h={s}:mode=avg")
     elif style.mosaic != "off":
         chain.append("pixelize@mz=w=1:h=1:mode=avg")
-    if style.mosaic != "off" or style.grain:
+    if style.meme:
+        # Baja calidad: se reduce la franja, se vuelve a ampliar (pixelado) y se suaviza + ruido leve de compresión.
+        q = max(0.05, min(1.0, style.meme_quality / 100.0))
+        chain += [f"scale=trunc(iw*{q:.3f}/2)*2:trunc(ih*{q:.3f}/2)*2:flags=bilinear",
+                  f"scale={width}:{bh}:flags=bicubic", f"gblur=sigma={0.4 + (1 - q) * 2.6:.2f}"]
+    if style.mosaic != "off" or style.grain or style.meme:
         band = f"[b]{','.join(chain)}"
         if style.grain:
             # El ruido solo toca los píxeles del texto (máscara = todo lo que no es el azul de fondo):
@@ -742,11 +836,11 @@ def preview_words(text: str) -> List[Word]:
 
 
 def preview_block_count(text: str, style: CaptionStyle) -> int:
-    return len(make_blocks(preview_words(text), max(1, style.words_per_block), style.uppercase))
+    return len(make_blocks(preview_words(text), max(1, style.words_per_block), style.uppercase, not style.meme))
 
 
 def block_duration_ms(text: str, style: CaptionStyle, block_index: int) -> int:
-    blocks = make_blocks(preview_words(text), max(1, style.words_per_block), style.uppercase)
+    blocks = make_blocks(preview_words(text), max(1, style.words_per_block), style.uppercase, not style.meme)
     blk = blocks[max(0, min(block_index, len(blocks) - 1))]
     return int((blk[-1].end - blk[0].start) * 1000)
 
@@ -757,7 +851,7 @@ def render_preview_png(
     """Un fotograma PNG del bloque elegido en el instante t_ms de su animación. Devuelve (png, log)."""
     words = preview_words(text)
     total = len(words) * PREVIEW_WORD + 1.0
-    blocks = make_blocks(words, max(1, style.words_per_block), style.uppercase)
+    blocks = make_blocks(words, max(1, style.words_per_block), style.uppercase, not style.meme)
     blk = blocks[max(0, min(block_index, len(blocks) - 1))]
     t = blk[0].start + max(0.0, min(t_ms / 1000.0, (blk[-1].end - blk[0].start) - 0.02))
     with tempfile.TemporaryDirectory() as tmp:
@@ -778,7 +872,7 @@ def render_preview_clip(
     style: CaptionStyle, text: str, fonts_dir: Path, width: int, height: int, n_blocks: int = 4,
 ) -> Tuple[Optional[bytes], str]:
     """Clip corto (MP4) con las primeras palabras para ver las animaciones en movimiento."""
-    blocks = make_blocks(preview_words(text), max(1, style.words_per_block), style.uppercase)[:n_blocks]
+    blocks = make_blocks(preview_words(text), max(1, style.words_per_block), style.uppercase, not style.meme)[:n_blocks]
     words = [w for b in blocks for w in b]
     total = words[-1].end + 0.5
     with tempfile.TemporaryDirectory() as tmp:
