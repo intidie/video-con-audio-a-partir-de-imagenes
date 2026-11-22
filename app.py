@@ -21,7 +21,7 @@ from media import (
 from subtitles import (
     CODECS, ENTRY_STYLES, EXIT_STYLES, MOSAIC_MODES, MOTION_STYLES, CaptionStyle, Word, block_duration_ms,
     estimate_word_timings, font_substitutions, list_font_families, name_from_text, preview_block_count,
-    render_captions, render_preview_clip, render_preview_png, synthesize_with_timings, system_font_families,
+    install_fonts, render_captions, render_preview_clip, render_preview_png, synthesize_with_timings, system_font_families,
     tokenize, unique_path,
 )
 from robot_tts import ROBOT_DEFAULTS, ROBOT_ENTRY, ROBOT_LANGS, ROBOT_VARIANTS, make_robot_id
@@ -33,6 +33,7 @@ TEMP_DIR, OUTPUT_DIR, FONTS_DIR = BASE_DIR / "temp", BASE_DIR / "output", BASE_D
 SETTINGS_FILE = BASE_DIR / "ajustes.json"
 MAX_PREVIEW_MB = 80
 OTHER_FONT = "Otra (escribir el nombre)..."
+AUTO_FONT = "Automática (Stamp RSPK si está instalada)"
 
 VOICES = {
     "Español (España) - Álvaro (Masculino)": "es-ES-AlvaroNeural",
@@ -60,7 +61,7 @@ DEFAULTS = {
     "motion": "Sin movimiento continuo", "in_ms": 110, "out_ms": 160, "letters": True, "wobble": True,
     "mosaic": "Sin mosaico", "mosaic_px": 36, "mosaic_ms": 300,
     "poster": True, "invert": False, "grain": False,
-    "meme": False, "meme_q": 35, "meme_cond": 100, "meme_w": 92, "hl": True, "hl_color": "#FFE600",
+    "meme": False, "meme_font": AUTO_FONT, "meme_q": 35, "meme_cond": 100, "meme_w": 92, "hl": True, "hl_color": "#FFE600",
     "sx": 135.0, "sy": 308.0, "track": -55.0, "lead": -54.0, "px": 535.1, "py": 500.0,
     "res": "2K (2560x1440)", "aspect": "9:16 (Vertical)", "fps": 60, "codec": FIRST_CODEC,
     "crf": "Máxima (CRF 18)", "inc_audio": True,
@@ -196,7 +197,7 @@ def style_from_state() -> CaptionStyle:
         in_ms=ss["in_ms"], out_ms=ss["out_ms"], letter_anim=ss["letters"], wobble=ss["wobble"],
         mosaic=MOSAIC_MODES[ss["mosaic"]], mosaic_px=ss["mosaic_px"], mosaic_ms=ss["mosaic_ms"],
         poster=ss["poster"], invert=ss["invert"], grain=ss["grain"],
-        meme=ss["meme"], meme_quality=ss["meme_q"], meme_condense=ss["meme_cond"], meme_width=ss["meme_w"],
+        meme=ss["meme"], meme_font="" if ss["meme_font"] == AUTO_FONT else ss["meme_font"], meme_quality=ss["meme_q"], meme_condense=ss["meme_cond"], meme_width=ss["meme_w"],
     )
 
 
@@ -207,13 +208,13 @@ def voice_args() -> tuple[str, str, str]:
     return VOICES[ss["voice"]], f"{ss['speed']:+d}%", f"{ss['pitch']:+d}Hz"
 
 
-def toggle(label: str, key: str):
+def toggle(label: str, key: str, disabled: bool = False):
     """Casilla + selector de color en la misma fila (como Rellenar / Trazo / Fondo / Sombra de Premiere)."""
     c1, c2 = st.columns([4, 1])
     with c1:
-        on = st.checkbox(label, key=f"{key}_on")
+        on = st.checkbox(label, key=f"{key}_on", disabled=disabled)
     with c2:
-        st.color_picker(label, key=f"{key}_color", disabled=not on, label_visibility="collapsed")
+        st.color_picker(label, key=f"{key}_color", disabled=disabled or not on, label_visibility="collapsed")
     return on
 
 
@@ -378,21 +379,37 @@ with tab_sub:
             slot = st.container()
 
         with ctrl:
+            fup = st.file_uploader("Subir fuente (.zip con fuentes, .otf o .ttf)", type=["zip", "otf", "ttf", "ttc"],
+                                   accept_multiple_files=True, key="font_upload",
+                                   help="Sube el .zip de la fuente y ya: se instala en /fonts y aparece en la lista.")
+            sig = tuple(sorted((f.name, f.size) for f in fup))
+            if fup and ss.get("_font_sig") != sig:
+                ss["_font_sig"] = sig
+                fams = install_fonts([(f.name, f.getvalue()) for f in fup], FONTS_DIR)
+                font_options.clear()
+                cached_preview.clear()
+                cached_clip.clear()
+                ss["_font_msg"] = ("ok", fams) if fams else ("err", [])
+            if ss.get("_font_msg"):
+                kind, fams = ss["_font_msg"]
+                (st.success if kind == "ok" else st.error)(
+                    f"Fuentes instaladas: {', '.join(fams)}" if kind == "ok"
+                    else "El archivo no contiene fuentes .otf/.ttf válidas.")
             fonts = font_options()
             if ss["font"] not in fonts:
                 ss["font"] = fonts[0]
-            st.selectbox("Fuente", fonts, key="font")
-            if ss["font"] == OTHER_FONT:
+            st.selectbox("Fuente", fonts, key="font", disabled=ss["meme"])
+            if ss["font"] == OTHER_FONT and not ss["meme"]:
                 st.text_input("Nombre exacto de la fuente instalada", key="font_custom",
                               help="Debe estar instalada en el equipo o copiada en la carpeta /fonts.")
             t1, t2, t3, t4, t5 = st.columns([2, 1.3, 1.3, 1.5, 1.7])
-            t1.number_input("Tamaño", 10.0, 400.0, key="size")
+            t1.number_input("Tamaño", 10.0, 400.0, key="size", disabled=ss["meme"])
             with t2:
-                st.checkbox("Negrita", key="bold")
+                st.checkbox("Negrita", key="bold", disabled=ss["meme"] and ss["meme_font"] == AUTO_FONT)
             with t3:
-                st.checkbox("Cursiva", key="italic")
+                st.checkbox("Cursiva", key="italic", disabled=ss["meme"])
             with t4:
-                st.checkbox("Subrayado", key="underline")
+                st.checkbox("Subrayado", key="underline", disabled=ss["meme"])
             with t5:
                 st.checkbox("MAYÚSCULAS", key="upper")
             if ss["poster"] and not ss["meme"]:
@@ -401,32 +418,32 @@ with tab_sub:
 
             st.markdown("##### Rellenar · Trazo · Fondo · Sombra")
             toggle("Rellenar", "fill")
-            stroke_on = toggle("Trazo (contorno exterior)", "stroke")
-            st.number_input("Grosor del trazo (px)", 0.0, 30.0, step=0.5, key="stroke", disabled=not stroke_on)
+            stroke_on = toggle("Trazo (contorno exterior)", "stroke", ss["meme"])
+            st.number_input("Grosor del trazo (px)", 0.0, 30.0, step=0.5, key="stroke", disabled=not stroke_on or ss["meme"])
             box_on = toggle("Fondo (marco sólido de color)", "box")
             b1, b2, b3 = st.columns([2, 1, 1])
             b1.slider("Opacidad del fondo (%)", 0, 100, key="box_op", disabled=not box_on)
             b2.number_input("Margen (px)", 0.0, 100.0, step=1.0, key="box_pad", disabled=not box_on)
             b3.number_input("Esquinas (px)", 0.0, 200.0, step=2.0, key="box_radius", disabled=not box_on)
-            sh_on = toggle("Sombra", "shadow")
+            sh_on = toggle("Sombra", "shadow", ss["meme"])
             s1, s2 = st.columns(2)
-            s1.number_input("Distancia de la sombra (px)", 0.0, 60.0, step=1.0, key="shadow_dist", disabled=not sh_on)
-            s2.slider("Opacidad de la sombra (%)", 0, 100, key="shadow_op", disabled=not sh_on)
+            s1.number_input("Distancia de la sombra (px)", 0.0, 60.0, step=1.0, key="shadow_dist", disabled=not sh_on or ss["meme"])
+            s2.slider("Opacidad de la sombra (%)", 0, 100, key="shadow_op", disabled=not sh_on or ss["meme"])
 
             st.markdown("##### Bloques y animación")
             e1, e2 = st.columns(2)
             e1.slider("Palabras por bloque", 1, 4, key="words")
             e2.slider("Máx. caracteres por línea", 6, 24, key="chars")
             a1, a2 = st.columns([3, 1])
-            a1.selectbox("Animación de entrada", OPTIONS["entry"], key="entry")
-            a2.number_input("Duración (ms)", 60, 600, step=10, key="in_ms")
+            a1.selectbox("Animación de entrada", OPTIONS["entry"], key="entry", disabled=ss["meme"])
+            a2.number_input("Duración (ms)", 60, 600, step=10, key="in_ms", disabled=ss["meme"])
             x1, x2 = st.columns([3, 1])
-            x1.selectbox("Animación de salida", OPTIONS["exit"], key="exit")
-            x2.number_input("Duración (ms) ", 60, 600, step=10, key="out_ms")
-            st.selectbox("Movimiento continuo", OPTIONS["motion"], key="motion")
+            x1.selectbox("Animación de salida", OPTIONS["exit"], key="exit", disabled=ss["meme"])
+            x2.number_input("Duración (ms) ", 60, 600, step=10, key="out_ms", disabled=ss["meme"])
+            st.selectbox("Movimiento continuo", OPTIONS["motion"], key="motion", disabled=ss["meme"])
             an1, an2 = st.columns(2)
-            an1.checkbox("Animar letras alternas (1 s)", key="letters")
-            an2.checkbox("Vaivén del recuadro cada 0,5 s (±2 px)", key="wobble")
+            an1.checkbox("Animar letras alternas (1 s)", key="letters", disabled=ss["meme"])
+            an2.checkbox("Vaivén del recuadro cada 0,5 s (±2 px)", key="wobble", disabled=ss["meme"])
 
             st.markdown("##### Mosaico (solo en el subtítulo, no en toda la pantalla)")
             mz1, mz2, mz3 = st.columns([2, 1, 1])
@@ -437,9 +454,9 @@ with tab_sub:
 
             st.markdown("##### Estilo cartel (SADE · SUPER STAR · INTI-NET)")
             ps1, ps2, ps3 = st.columns(3)
-            ps1.checkbox("Estilo cartel serif", key="poster")
-            ps2.checkbox("Invertir colores", key="invert", disabled=not ss["poster"])
-            ps3.checkbox("Granulado", key="grain")
+            ps1.checkbox("Estilo cartel serif", key="poster", disabled=ss["meme"])
+            ps2.checkbox("Invertir colores", key="invert", disabled=not ss["poster"] or ss["meme"])
+            ps3.checkbox("Granulado", key="grain", disabled=ss["meme"])
             st.markdown("##### Estilo meme (texto simple, baja calidad)")
             st.checkbox("Estilo meme: texto repartido por toda la pantalla y de baja calidad", key="meme")
             if ss["meme"]:
@@ -447,21 +464,26 @@ with tab_sub:
                 me1.slider("Calidad (más bajo = más borroso)", 5, 100, key="meme_q")
                 me2.slider("Ancho de letra (%)", 50, 120, key="meme_cond")
                 me3.slider("Ancho del bloque / marco (%)", 40, 100, key="meme_w")
+                meme_fonts = [AUTO_FONT] + font_options()[:-1]
+                if ss["meme_font"] not in meme_fonts:
+                    ss["meme_font"] = AUTO_FONT
+                st.selectbox("Fuente del meme", meme_fonts, key="meme_font")
                 st.caption("Color de la letra = «Rellenar». Marco sólido centrado detrás del texto = «Fondo» "
                            "(actívalo y elige su color, opacidad y margen). Fuente: copia «Stamp RSPK One-Medium» "
-                           "(.ttf/.otf) en la carpeta /fonts y se usa sola; sin ella se usa Cousine Bold. "
-                           "Recomendado: 4-6 palabras por bloque y 12-16 caracteres por línea.")
+                           "(.zip/.otf) con «Subir fuente» y se usa sola; sin ella se usa Cousine Bold. "
+                           "En este estilo no aplican: trazo, sombra, animaciones, movimiento, resaltado, cartel y «Transformar». "
+                           "Mosaico: solo «Siempre». Recomendado: 4-6 palabras por bloque y 12-16 caracteres por línea.")
             h1, h2 = st.columns([3, 1])
-            h1.checkbox("Resaltar palabra activa", key="hl")
-            h2.color_picker("Color del resaltado", key="hl_color", disabled=not ss["hl"], label_visibility="collapsed")
+            h1.checkbox("Resaltar palabra activa", key="hl", disabled=ss["meme"])
+            h2.color_picker("Color del resaltado", key="hl_color", disabled=not ss["hl"] or ss["meme"], label_visibility="collapsed")
             with st.expander("Transformar (valores de Premiere Pro)"):
                 q1, q2 = st.columns(2)
-                q1.number_input("Escala horizontal (%)", 10.0, 600.0, key="sx")
-                q2.number_input("Escala vertical (%)", 10.0, 600.0, key="sy")
-                q1.number_input("Tracking", -500.0, 500.0, key="track")
-                q2.number_input("Interlineado", -300.0, 300.0, key="lead")
-                q1.number_input("Posición X (sobre 1080)", 0.0, 4000.0, key="px")
-                q2.number_input("Posición Y (sobre 1920)", 0.0, 4000.0, key="py")
+                q1.number_input("Escala horizontal (%)", 10.0, 600.0, key="sx", disabled=ss["meme"])
+                q2.number_input("Escala vertical (%)", 10.0, 600.0, key="sy", disabled=ss["meme"])
+                q1.number_input("Tracking", -500.0, 500.0, key="track", disabled=ss["meme"])
+                q2.number_input("Interlineado", -300.0, 300.0, key="lead", disabled=ss["meme"])
+                q1.number_input("Posición X (sobre 1080)", 0.0, 4000.0, key="px", disabled=ss["meme"])
+                q2.number_input("Posición Y (sobre 1920)", 0.0, 4000.0, key="py", disabled=ss["meme"])
 
         style = style_from_state()
         style_json = json.dumps(asdict(style))

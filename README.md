@@ -39,7 +39,7 @@ y se recuerda en `ajustes.json`).
   de los subtítulos son exactos. Velocidad y tono usan los mismos sliders. Voces/variantes en `robot_tts.py`
   (puedes copiar más `.json` de voces a `mespeak/voices/`).
 - **Estilo meme** (pestaña de estilo): texto simple, palabras repartidas de borde a borde, líneas apretadas y de baja
-  calidad, con la fuente «Stamp RSPK One-Medium» si copias el .ttf/.otf en `fonts/` (si no, Cousine Bold). La licencia de LRC Type Foundry no permite redistribuir la fuente, así que NO viene en el repo: copia `StampRSPKOne-Medium.otf` en `fonts/` (con el instalador: `%LOCALAPPDATA%\SubtitulosCartel\fonts`). Color de letra =
+  calidad, con la fuente «Stamp RSPK One-Medium» si copias el .ttf/.otf en `fonts/` (si no, Cousine Bold). La fuente NO viene en el repo (la licencia de LRC Type Foundry no permite redistribuirla): usa **Subir fuente** en la pestaña de estilo y sube el `.zip` de Stamp RSPK (o los `.otf`); se instala sola en `fonts/` y se usa automáticamente. Color de letra =
   «Rellenar»; marco sólido centrado opcional y su color = «Fondo»; slider de ancho del bloque.
 
 ## Qué hay

@@ -142,6 +142,7 @@ class CaptionStyle:
     meme: bool = False
     meme_quality: float = 35.0     # 5-100 %: cuanto menor, más pixelado / borroso
     meme_condense: float = 100.0   # ancho de letra (%), 100 = normal
+    meme_font: str = ""            # "" = automática (Stamp RSPK si está en /fonts, si no Cousine Bold)
     meme_width: float = 92.0       # ancho del bloque y del marco, centrados en pantalla (% del ancho)
 
 
@@ -376,7 +377,7 @@ def build_ass_meme(words: Sequence[Word], style: CaptionStyle, width: int, heigh
                    fonts_dir: Optional[Path] = None) -> Captions:
     """Estilo meme: líneas apretadas, palabras repartidas de borde a borde de la pantalla, sin animación."""
     cond = max(30.0, style.meme_condense) / 100.0
-    font, bold = meme_font(fonts_dir)
+    font, bold = (style.meme_font, style.bold) if style.meme_font else meme_font(fonts_dir)
     fm = get_font_metrics(font, bold, False, fonts_dir)
     avail = width * max(30.0, min(100.0, style.meme_width)) / 100.0
     margin = (width - avail) / 2.0                                    # bloque y marco siempre centrados
@@ -1023,6 +1024,42 @@ def text_width_em(metrics: FontMetrics, text: str) -> float:
         except Exception:
             pass
     return 0.55 * len(text)
+
+
+def install_fonts(files: Sequence[Tuple[str, bytes]], fonts_dir: Path, max_mb: int = 25) -> List[str]:
+    """Instala fuentes subidas por el usuario (.zip con fuentes, o .otf/.ttf sueltos) en `fonts_dir`.
+
+    Solo se extraen archivos .otf/.ttf/.ttc (por su nombre base: sin rutas, sin sobrescribir fuera de la carpeta) y se
+    guardan como `usuario_<nombre>`. Devuelve las familias instaladas; vacía si no había ninguna fuente válida.
+    """
+    import io
+    import zipfile
+
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    found: List[Tuple[str, bytes]] = []
+    for name, data in files:
+        if name.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as z:
+                    for info in z.infolist():
+                        base = Path(info.filename).name
+                        if (not info.is_dir() and Path(base).suffix.lower() in FONT_EXTS and not base.startswith(".")
+                                and info.file_size <= max_mb * 1_000_000 and len(found) < 60):
+                            found.append((base, z.read(info)))
+            except zipfile.BadZipFile:
+                continue
+        elif Path(name).suffix.lower() in FONT_EXTS and len(data) <= max_mb * 1_000_000:
+            found.append((Path(name).name, data))
+    fams = set()
+    for base, data in found:
+        dst = fonts_dir / f"usuario_{re.sub(r'[^A-Za-z0-9._-]', '_', base)}"
+        dst.write_bytes(data)
+        fam = _font_info(str(dst))[0]
+        if fam:
+            fams.add(fam)
+    list_font_families.cache_clear()
+    _metrics.cache_clear()
+    return sorted(fams, key=str.lower)
 
 
 def name_from_text(text: str, n: int = 3, fallback: str = "subtitulos") -> str:
