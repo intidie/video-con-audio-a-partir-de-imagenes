@@ -1,5 +1,16 @@
 # Subtítulos estilo cartel (y lip-sync PNGtuber)
 
+<p align="center">
+  <a href="https://github.com/intidie/video-con-audio-a-partir-de-imagenes/releases/latest/download/Instalar-Subtitulos-Cartel.bat">
+    <img alt="Descargar para Windows 11" src="https://img.shields.io/badge/%E2%AC%87%20Descargar%20para%20Windows%2011-Instalador-0078D4?style=for-the-badge&logo=windows11&logoColor=white" height="48">
+  </a>
+</p>
+
+**Instalación en un clic (Windows 11):** pulsa el botón, abre `Instalar-Subtitulos-Cartel.bat` y espera. Instala Python,
+FFmpeg y Node.js si faltan (con `winget`), descarga la app, crea el acceso directo **Subtitulos Cartel** y la abre.
+Para actualizar, vuelve a ejecutarlo (se conservan tus ajustes). Si Windows avisa de «SmartScreen»: *Más información > Ejecutar de todos modos*.
+
+
 Genera un video con subtítulos palabra por palabra sobre pantalla azul oscura (#00008B), listo para aplicar
 **Ultra Key** en Premiere Pro. Pensado para ejecutarse **en local**, como una app de escritorio.
 
@@ -22,12 +33,14 @@ El video se guarda con las **3 primeras palabras del guion** como nombre (`hola_
 y se recuerda en `ajustes.json`).
 
 ## Voz robótica (meSpeak.js) y estilo meme
-- **Voces «Robot (meSpeak)»** en el selector de voz: usan `mespeak/mespeak-core.js` (eSpeak en JavaScript) ejecutado con
+- **Voz «Robot (meSpeak.js)»** en el selector de voz, con el mismo menú de meSpeak (Amplitude, Pitch, Speed, Word gap,
+  Variant y Voice con todos los idiomas) y botón **Probar voz**: usan `mespeak/mespeak-core.js` (eSpeak en JavaScript) ejecutado con
   **Node.js** (`winget install OpenJS.NodeJS.LTS`), sin internet. Cada palabra se sintetiza por separado, así los tiempos
   de los subtítulos son exactos. Velocidad y tono usan los mismos sliders. Voces/variantes en `robot_tts.py`
   (puedes copiar más `.json` de voces a `mespeak/voices/`).
 - **Estilo meme** (pestaña de estilo): texto simple, palabras repartidas de borde a borde, líneas apretadas y de baja
-  calidad (slider de calidad y ancho de letra). Color de letra = «Rellenar»; recuadro opcional y su color = «Fondo».
+  calidad, con la fuente «Stamp RSPK One-Medium» si copias el .ttf/.otf en `fonts/` (si no, Cousine Bold). Color de letra =
+  «Rellenar»; marco sólido centrado opcional y su color = «Fondo»; slider de ancho del bloque.
 
 ## Qué hay
 - **Estilo cartel serif + Bebas Neue** por defecto, con los valores de Premiere (escala, tracking, posición...).

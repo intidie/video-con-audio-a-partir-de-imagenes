@@ -141,7 +141,8 @@ class CaptionStyle:
     # Estilo meme: texto simple repartido por toda la pantalla y degradado (baja calidad)
     meme: bool = False
     meme_quality: float = 35.0     # 5-100 %: cuanto menor, más pixelado / borroso
-    meme_condense: float = 80.0    # ancho de letra (%), 100 = normal
+    meme_condense: float = 100.0   # ancho de letra (%), 100 = normal
+    meme_width: float = 92.0       # ancho del bloque y del marco, centrados en pantalla (% del ancho)
 
 
 @dataclass
@@ -357,14 +358,29 @@ def effect_commands(spans: Sequence[Tuple[float, float]], style: CaptionStyle, k
     return "".join(f"{t:.3f} {c};\n" for t, c in lines)
 
 
+MEME_FONT_HINTS = ("rspk", "stamp")
+
+
+def meme_font(fonts_dir: Optional[Path]) -> Tuple[str, bool]:
+    """(familia, negrita) del estilo meme: «Stamp RSPK One-Medium» si está en /fonts; si no, Cousine Bold."""
+    try:
+        for fam in list_font_families(str(fonts_dir)) if fonts_dir else []:
+            if any(h in fam.lower() for h in MEME_FONT_HINTS):
+                return fam, False
+    except Exception:
+        pass
+    return "Cousine", True
+
+
 def build_ass_meme(words: Sequence[Word], style: CaptionStyle, width: int, height: int, total_duration: float,
                    fonts_dir: Optional[Path] = None) -> Captions:
     """Estilo meme: líneas apretadas, palabras repartidas de borde a borde de la pantalla, sin animación."""
     cond = max(30.0, style.meme_condense) / 100.0
-    fm = get_font_metrics(style.font_family, style.bold, style.italic, fonts_dir)
-    margin = 0.04 * width
-    avail = width - 2 * margin
-    flags = f"{-1 if style.bold else 0},{-1 if style.italic else 0},0,0"
+    font, bold = meme_font(fonts_dir)
+    fm = get_font_metrics(font, bold, False, fonts_dir)
+    avail = width * max(30.0, min(100.0, style.meme_width)) / 100.0
+    margin = (width - avail) / 2.0                                    # bloque y marco siempre centrados
+    flags = f"{-1 if bold else 0},0,0,0"
     blocks = make_blocks(words, max(1, style.words_per_block), style.uppercase, not style.meme)
     events: List[str] = []
     spans: List[Tuple[float, float]] = []
@@ -426,7 +442,7 @@ def build_ass_meme(words: Sequence[Word], style: CaptionStyle, width: int, heigh
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Meme,{style.font_family},{_f(size_ref or 40)},{_ass_col(style.fill, 0 if style.fill_on else 255)},"
+        f"Style: Meme,{font},{_f(size_ref or 40)},{_ass_col(style.fill, 0 if style.fill_on else 255)},"
         f"&H000000FF,&H00000000,&H00000000,{flags},100,100,0,0,1,0,0,7,0,0,0,1\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )

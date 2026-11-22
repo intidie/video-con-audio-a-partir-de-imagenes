@@ -24,7 +24,7 @@ from subtitles import (
     render_captions, render_preview_clip, render_preview_png, synthesize_with_timings, system_font_families,
     tokenize, unique_path,
 )
-from robot_tts import ROBOT_VOICES
+from robot_tts import ROBOT_DEFAULTS, ROBOT_ENTRY, ROBOT_LANGS, ROBOT_VARIANTS, make_robot_id
 
 st.set_page_config(page_title="Subtítulos estilo cartel", page_icon="🎬", layout="wide")
 
@@ -41,7 +41,6 @@ VOICES = {
     "Español (México) - Dalia (Femenino)": "es-MX-DaliaNeural",
     "Español (Colombia) - Gonzalo (Masculino)": "es-CO-GonzaloNeural",
     "Español (Colombia) - Salome (Femenino)": "es-CO-SalomeNeural",
-    **ROBOT_VOICES,   # voces robóticas de meSpeak.js (sin internet; requieren Node.js)
 }
 SRC_TTS = "Generar voz con TTS (tiempos exactos por palabra)"
 SRC_UPLOAD = "Subir un audio (tiempos estimados)"
@@ -49,7 +48,9 @@ FIRST_CODEC = next(iter(CODECS))
 
 # Valores por defecto (los de las capturas). Las claves son las de los widgets.
 DEFAULTS = {
-    "voice": "Español (Colombia) - Salome (Femenino)", "speed": 50, "pitch": -25, "src_mode": SRC_TTS,
+    "voice": "Español (Colombia) - Salome (Femenino)", "speed": 50,
+    "r_lang": "es-la - Spanish, Latin America", "r_variant": "None", "r_amp": ROBOT_DEFAULTS["amp"],
+    "r_pitch": ROBOT_DEFAULTS["pitch"], "r_speed": ROBOT_DEFAULTS["speed"], "r_gap": ROBOT_DEFAULTS["gap"], "pitch": -25, "src_mode": SRC_TTS,
     "noise": -35, "minsil": 0.25,
     "font": "Bebas Neue", "size": 150.0, "bold": False, "italic": True, "underline": False, "upper": False,
     "fill_on": True, "fill_color": "#FFFFFF", "stroke_on": True, "stroke_color": "#000000", "stroke": 4.0,
@@ -59,7 +60,7 @@ DEFAULTS = {
     "motion": "Sin movimiento continuo", "in_ms": 110, "out_ms": 160, "letters": True, "wobble": True,
     "mosaic": "Sin mosaico", "mosaic_px": 36, "mosaic_ms": 300,
     "poster": True, "invert": False, "grain": False,
-    "meme": False, "meme_q": 35, "meme_cond": 80, "hl": True, "hl_color": "#FFE600",
+    "meme": False, "meme_q": 35, "meme_cond": 100, "meme_w": 92, "hl": True, "hl_color": "#FFE600",
     "sx": 135.0, "sy": 308.0, "track": -55.0, "lead": -54.0, "px": 535.1, "py": 500.0,
     "res": "2K (2560x1440)", "aspect": "9:16 (Vertical)", "fps": 60, "codec": FIRST_CODEC,
     "crf": "Máxima (CRF 18)", "inc_audio": True,
@@ -68,7 +69,8 @@ DEFAULTS = {
     "out_dir": "",  # carpeta de salida; vacío = la carpeta output/ de la app
 }
 OPTIONS = {
-    "voice": list(VOICES), "src_mode": [SRC_TTS, SRC_UPLOAD], "entry": list(ENTRY_STYLES), "exit": list(EXIT_STYLES),
+    "voice": list(VOICES) + [ROBOT_ENTRY], "r_lang": list(ROBOT_LANGS), "r_variant": list(ROBOT_VARIANTS),
+    "src_mode": [SRC_TTS, SRC_UPLOAD], "entry": list(ENTRY_STYLES), "exit": list(EXIT_STYLES),
     "motion": list(MOTION_STYLES), "mosaic": list(MOSAIC_MODES), "res": list(RES_MAP), "aspect": list(ASPECT_MAP),
     "fps": [24, 30, 60], "codec": list(CODECS), "crf": list(CRF_MAP), "ls_res": list(RES_MAP),
     "ls_aspect": list(ASPECT_MAP), "ls_fps": [24, 30, 60], "ls_crf": list(CRF_MAP),
@@ -194,8 +196,15 @@ def style_from_state() -> CaptionStyle:
         in_ms=ss["in_ms"], out_ms=ss["out_ms"], letter_anim=ss["letters"], wobble=ss["wobble"],
         mosaic=MOSAIC_MODES[ss["mosaic"]], mosaic_px=ss["mosaic_px"], mosaic_ms=ss["mosaic_ms"],
         poster=ss["poster"], invert=ss["invert"], grain=ss["grain"],
-        meme=ss["meme"], meme_quality=ss["meme_q"], meme_condense=ss["meme_cond"],
+        meme=ss["meme"], meme_quality=ss["meme_q"], meme_condense=ss["meme_cond"], meme_width=ss["meme_w"],
     )
+
+
+def voice_args() -> tuple[str, str, str]:
+    """(id de voz, velocidad, tono) de la voz elegida. En la robótica, todas las opciones van dentro del id."""
+    if ss["voice"] == ROBOT_ENTRY:
+        return make_robot_id(ss["r_lang"], ss["r_variant"], ss["r_amp"], ss["r_pitch"], ss["r_speed"], ss["r_gap"]), "", ""
+    return VOICES[ss["voice"]], f"{ss['speed']:+d}%", f"{ss['pitch']:+d}Hz"
 
 
 def toggle(label: str, key: str):
@@ -291,23 +300,45 @@ if txt_file is not None and ss.get("_txt_id") != txt_file.file_id:
     ss["script"] = txt_file.getvalue().decode("utf-8", errors="ignore")
 st.text_area("Texto de los subtítulos:", key="script", height=380, placeholder="Escribe o pega aquí el guion...")
 
-v1, v2, v3 = st.columns([2, 1, 1])
-v1.selectbox("Voz", OPTIONS["voice"], key="voice")
-v2.slider("Velocidad (%)", -50, 50, step=5, key="speed")
-v3.slider("Tono (Hz)", -50, 50, step=5, key="pitch")
+st.selectbox("Voz", OPTIONS["voice"], key="voice")
+if ss["voice"] == ROBOT_ENTRY:
+    st.markdown("**Opciones:**")
+    r1, r2, r3, r4, r5 = st.columns([1, 1, 1, 1, 2])
+    r1.number_input("Amplitude", 0, 200, step=5, key="r_amp")
+    r2.number_input("Pitch", 0, 99, step=1, key="r_pitch")
+    r3.number_input("Speed", 80, 450, step=5, key="r_speed")
+    r4.number_input("Word gap", 0, 50, step=1, key="r_gap")
+    r5.selectbox("Variant", OPTIONS["r_variant"], key="r_variant")
+    st.selectbox("Voice", OPTIONS["r_lang"], key="r_lang")
+else:
+    v2, v3 = st.columns(2)
+    v2.slider("Velocidad (%)", -50, 50, step=5, key="speed")
+    v3.slider("Tono (Hz)", -50, 50, step=5, key="pitch")
 
-if st.button("Generar audio de voz (solo MP3)", key="gen_audio"):
+g1, g2 = st.columns(2)
+if g1.button("Generar audio de voz (solo MP3)", key="gen_audio", use_container_width=True):
     if not ss["script"].strip():
         st.error("Escribe el guion arriba.")
     else:
         try:
             with st.spinner("Generando voz..."):
-                mp3 = cached_tts(ss["script"].strip(), VOICES[ss["voice"]], f"{ss['speed']:+d}%", f"{ss['pitch']:+d}Hz")[0]
+                mp3 = cached_tts(ss["script"].strip(), *voice_args())[0]
             apath = unique_path(resolve_out_dir(), name_from_text(ss["script"]), "mp3")
             apath.write_bytes(mp3)
             ss["audio_result"] = str(apath)
         except Exception as exc:
-            st.error(f"No se pudo generar la voz (¿hay conexión a internet?): {exc}")
+            st.error(f"No se pudo generar la voz: {exc}")
+if g2.button("Probar voz (primeras 12 palabras)", key="test_voice", use_container_width=True):
+    if not ss["script"].strip():
+        st.error("Escribe el guion arriba.")
+    else:
+        try:
+            with st.spinner("Generando muestra..."):
+                ss["voice_sample"] = cached_tts(" ".join(ss["script"].split()[:12]), *voice_args())[0]
+        except Exception as exc:
+            st.error(f"No se pudo generar la voz: {exc}")
+if ss.get("voice_sample"):
+    st.audio(ss["voice_sample"], format="audio/mp3")
 if ss.get("audio_result") and Path(ss["audio_result"]).exists():
     st.audio(ss["audio_result"])
     st.caption(f"Guardado en: {ss['audio_result']}")
@@ -412,12 +443,14 @@ with tab_sub:
             st.markdown("##### Estilo meme (texto simple, baja calidad)")
             st.checkbox("Estilo meme: texto repartido por toda la pantalla y de baja calidad", key="meme")
             if ss["meme"]:
-                me1, me2 = st.columns(2)
+                me1, me2, me3 = st.columns(3)
                 me1.slider("Calidad (más bajo = más borroso)", 5, 100, key="meme_q")
                 me2.slider("Ancho de letra (%)", 50, 120, key="meme_cond")
-                st.caption("Usa «Rellenar» para el color de la letra y «Fondo» para el recuadro y su color "
-                           "(activa «Fondo» para verlo). Sugerencia: palabras por bloque 4-6, máx. caracteres 12-16, "
-                           "y una fuente condensada (p. ej. Arial Narrow / Liberation Sans Narrow).")
+                me3.slider("Ancho del bloque / marco (%)", 40, 100, key="meme_w")
+                st.caption("Color de la letra = «Rellenar». Marco sólido centrado detrás del texto = «Fondo» "
+                           "(actívalo y elige su color, opacidad y margen). Fuente: copia «Stamp RSPK One-Medium» "
+                           "(.ttf/.otf) en la carpeta /fonts y se usa sola; sin ella se usa Cousine Bold. "
+                           "Recomendado: 4-6 palabras por bloque y 12-16 caracteres por línea.")
             h1, h2 = st.columns([3, 1])
             h1.checkbox("Resaltar palabra activa", key="hl")
             h2.color_picker("Color del resaltado", key="hl_color", disabled=not ss["hl"], label_visibility="collapsed")
@@ -495,8 +528,7 @@ with tab_sub:
                 audio_path = work / "audio.mp3"
                 if ss["src_mode"] == SRC_TTS:
                     bar.progress(0.02, text="Generando voz y tiempos por palabra…")
-                    rate, pitch = f"{ss['speed']:+d}%", f"{ss['pitch']:+d}Hz"
-                    audio_bytes, wt, tmode = cached_tts(text, VOICES[ss["voice"]], rate, pitch)
+                    audio_bytes, wt, tmode = cached_tts(text, *voice_args())
                     audio_path.write_bytes(audio_bytes)
                 else:
                     bar.progress(0.02, text="Analizando audio…")
@@ -570,7 +602,7 @@ with tab_ls:
                 else:
                     audio_path = work / "audio.mp3"
                     bar.progress(0.02, text="Generando voz…")
-                    audio_path.write_bytes(cached_tts(text, VOICES[ss["voice"]], f"{ss['speed']:+d}%", f"{ss['pitch']:+d}Hz")[0])
+                    audio_path.write_bytes(cached_tts(text, *voice_args())[0])
 
                 def save_imgs(files, tag):
                     paths = []
