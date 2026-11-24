@@ -1,15 +1,17 @@
 # Subtítulos estilo cartel (y lip-sync PNGtuber)
 
 <p align="center">
-  <a href="https://github.com/intidie/video-con-audio-a-partir-de-imagenes/archive/refs/heads/main.zip">
-    <img alt="Descargar para Windows 11" src="https://img.shields.io/badge/%E2%AC%87%20Descargar%20para%20Windows%2011-Instalador-0078D4?style=for-the-badge&logo=windows11&logoColor=white" height="48">
+  <a href="https://github.com/intidie/video-con-audio-a-partir-de-imagenes/releases/latest/download/SubtitulosCartel-Instalador.exe">
+    <img alt="Descargar para Windows 11" src="https://img.shields.io/badge/%E2%AC%87%20Descargar%20para%20Windows%2011-Instalador%20.exe-0078D4?style=for-the-badge&logo=windows11&logoColor=white" height="48">
   </a>
 </p>
 
-**Instalación en un clic (Windows 11):** pulsa el botón (descarga un ZIP), descomprímelo, abre `Instalar-Subtitulos-Cartel.bat` y espera. Instala Python,
-FFmpeg y Node.js si faltan (con `winget`), descarga la app, crea el acceso directo **Subtitulos Cartel** y la abre.
-Para actualizar, vuelve a ejecutarlo (se conservan tus ajustes). Si Windows avisa de «SmartScreen»: *Más información > Ejecutar de todos modos*.
-
+**Instalación en un clic (Windows 11):** pulsa el botón: descarga solo `SubtitulosCartel-Instalador.exe` (no hace falta
+bajar el repositorio). Ábrelo y espera: instala Python, FFmpeg, Node.js y ExifTool si faltan (con `winget`), descarga la
+última versión de la app, crea el acceso directo **Subtitulos Cartel** en el Escritorio y en el menú Inicio, y la abre.
+Para actualizar, vuelve a ejecutarlo (se conservan tus ajustes y tus fuentes). Si Windows avisa de «SmartScreen»:
+*Más información > Ejecutar de todos modos* (el .exe no está firmado). El .exe se compila solo con GitHub Actions
+(`.github/workflows/instalador.yml`) cada vez que cambia el instalador.
 
 Genera un video con subtítulos palabra por palabra sobre pantalla azul oscura (#00008B), listo para aplicar
 **Ultra Key** en Premiere Pro. Pensado para ejecutarse **en local**, como una app de escritorio.
@@ -47,9 +49,12 @@ y se recuerda en `ajustes.json`).
 - **Animaciones** de entrada (pop, rebote, zoom, giro, desliza, cae, parpadeo, letras en cascada), de salida
   y movimiento continuo (latido, flotar). **Mosaico** solo sobre el subtítulo (entrada/salida/siempre).
 - **Visor de animaciones**: control de «instante» cuadro a cuadro y botón ▶ para ver el clip en movimiento.
-- Los ajustes se guardan en `ajustes.json`; «Restablecer valores» vuelve a los de fábrica.
+- **Compatible con Premiere Pro**: H.264 High (avc1, yuv420p, BT.709, GOP de 1 s, audio 48 kHz, fps constante), ProRes 422 HQ y DNxHR HQ.
+- Los ajustes (última configuración usada) se guardan en `ajustes.json`; «Restablecer valores» vuelve a los de fábrica.
 
-## Limpieza automática de metadatos
+## Limpieza automática de metadatos (ExifCleaner integrado)
+Se activa/desactiva en la barra lateral (**🧹 Limpiar metadatos al exportar**, activado por defecto) y ahí mismo puedes
+limpiar un video que ya tengas (**Limpiar un video que ya tengo**). El instalador añade ExifTool, el motor de ExifCleaner.
 Todo video exportado (subtítulos y lip-sync, en H.264, ProRes y DNxHR) pasa por `media.strip_metadata()`, **sin
 recodificar** (no pierde calidad). Elimina las huellas que deja FFmpeg: etiquetas `encoder` (Lavf/Lavc), `creation_time`,
 capítulos, nombres de handler y el SEI de x264 (`x264 - core ... options`), y evita que el codificador AAC escriba su

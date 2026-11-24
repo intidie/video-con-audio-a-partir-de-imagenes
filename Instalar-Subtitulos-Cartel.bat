@@ -6,7 +6,7 @@ set "REPO=intidie/video-con-audio-a-partir-de-imagenes"
 set "DEST=%LOCALAPPDATA%\SubtitulosCartel"
 echo ============================================================
 echo   Instalador de Subtitulos Cartel para Windows 11
-echo   Instala Python, FFmpeg y Node.js si faltan, descarga la app
+echo   Instala Python, FFmpeg, Node.js y ExifTool si faltan, descarga la app
 echo   y crea el acceso directo. Solo hay que esperar.
 echo ============================================================
 echo.
@@ -16,6 +16,7 @@ where winget >nul 2>nul || (echo [!] No se encontro winget. Actualiza "Instalado
 call :need python  Python.Python.3.12
 call :need ffmpeg  Gyan.FFmpeg
 call :need node    OpenJS.NodeJS.LTS
+call :need exiftool OliverBetz.ExifTool
 call :refresh_path
 where python >nul 2>nul || (echo [!] Python no quedo disponible. Cierra esta ventana y vuelve a ejecutar el instalador. & pause & exit /b 1)
 where ffmpeg >nul 2>nul || (echo [!] FFmpeg no quedo disponible. Cierra esta ventana y vuelve a ejecutar el instalador. & pause & exit /b 1)

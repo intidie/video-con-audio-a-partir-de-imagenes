@@ -35,6 +35,15 @@ def run(cmd: Sequence[str], cwd: Optional[Path] = None) -> subprocess.CompletedP
 BITEXACT_FLAGS = ["-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact"]
 
 
+def exiftool_path() -> Optional[str]:
+    """exiftool del PATH o el que el instalador deja en la carpeta tools/ de la app (motor de ExifCleaner)."""
+    here = Path(__file__).resolve().parent / "tools"
+    for c in (here / "exiftool.exe", here / "exiftool"):
+        if c.exists():
+            return str(c)
+    return shutil.which("exiftool")
+
+
 def _video_codec(path: Path) -> str:
     r = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name",
              "-of", "csv=p=0", str(path)])
@@ -72,8 +81,11 @@ def strip_metadata(path: Path) -> bool:
             return False
         if run(["ffmpeg", "-v", "error", "-i", str(tmp), "-f", "null", "-"]).stderr.strip():
             return False                                          # el resultado no decodifica limpio: no lo uses
-        if shutil.which("exiftool"):
-            run(["exiftool", "-q", "-overwrite_original", "-all=", str(tmp)])
+        exif = exiftool_path()
+        if exif:
+            # Igual que ExifCleaner: borra todo lo que exiftool puede escribir (XMP, QuickTime, UserData, Keys...).
+            run([exif, "-q", "-q", "-m", "-overwrite_original", "-api", "LargeFileSupport=1",
+                 "-all=", "-XMP:all=", "-QuickTime:all=", str(tmp)])
             if run(["ffmpeg", "-v", "error", "-i", str(tmp), "-f", "null", "-"]).stderr.strip():
                 return False
         os.replace(tmp, path)
@@ -134,7 +146,7 @@ def target_dims(res_label: str, aspect_label: str) -> Tuple[int, int]:
 def make_lipsync(
     audio: Path, talking: Sequence[Path], silent: Sequence[Path], out_path: Path, work_dir: Path,
     width: int, height: int, fps: int, crf: int, noise_db: float, min_silence: float,
-    progress: Optional[Callable[[float, str], None]] = None, switch_s: float = 0.18,
+    progress: Optional[Callable[[float, str], None]] = None, switch_s: float = 0.18, clean: bool = True,
 ) -> Tuple[bool, str, int]:
     """Devuelve (ok, log, n_segmentos). Cada imagen se escala una sola vez; el render usa x264 veryfast."""
     say = progress or (lambda f, m: None)
@@ -168,12 +180,14 @@ def make_lipsync(
     say(0.3, "Renderizando")
     r = run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "filelist.txt", "-i", str(audio),
-        "-r", str(fps), "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-        "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", *BITEXACT_FLAGS, "-map_metadata", "-1",
-        "-shortest", str(out_path),
+        "-r", str(fps), "-fps_mode", "cfr", "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast",
+        "-tune", "stillimage", "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p", "-crf", str(crf), "-g", str(fps), "-keyint_min", str(fps),
+        "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-tag:v", "avc1", "-movflags", "+faststart",
+        *BITEXACT_FLAGS, "-map_metadata", "-1", "-shortest", str(out_path),
     ], cwd=work_dir)
     ok = out_path.exists() and out_path.stat().st_size > 0
-    if ok:
+    if ok and clean:
         say(0.97, "Limpiando metadatos")
         strip_metadata(out_path)
     say(1.0, "Listo")

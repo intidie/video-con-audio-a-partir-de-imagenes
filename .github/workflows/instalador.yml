@@ -1,0 +1,34 @@
+# Compila SubtitulosCartel-Instalador.exe y lo publica como descarga directa en Releases.
+# Enlace fijo: https://github.com/intidie/video-con-audio-a-partir-de-imagenes/releases/latest/download/SubtitulosCartel-Instalador.exe
+name: Instalador .exe
+on:
+  push:
+    branches: [main]
+    paths: ["Instalar-Subtitulos-Cartel.bat", "instalador/**", "icono.ico", ".github/workflows/instalador.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compilar con PyInstaller
+        run: |
+          pip install pyinstaller==6.11.1
+          pyinstaller --onefile --console --name SubtitulosCartel-Instalador --icon icono.ico `
+            --add-data "Instalar-Subtitulos-Cartel.bat;." instalador/instalador.py
+      - name: Publicar en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: instalador
+          name: Instalador para Windows
+          make_latest: "true"
+          body: |
+            Descarga **SubtitulosCartel-Instalador.exe**, ábrelo y espera. Instala lo necesario, descarga la última
+            versión de la app y crea el acceso directo **Subtitulos Cartel** en el Escritorio.
+            Si Windows muestra SmartScreen: *Más información > Ejecutar de todos modos*.
+          files: dist/SubtitulosCartel-Instalador.exe

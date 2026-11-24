@@ -15,8 +15,8 @@ from pathlib import Path
 import streamlit as st
 
 from media import (
-    ASPECT_MAP, CRF_MAP, RES_MAP, build_intervals, detect_silence, ffmpeg_available, get_duration,
-    make_lipsync, speech_segments, target_dims,
+    ASPECT_MAP, CRF_MAP, RES_MAP, build_intervals, detect_silence, exiftool_path, ffmpeg_available, get_duration,
+    make_lipsync, speech_segments, strip_metadata, target_dims,
 )
 from subtitles import (
     CODECS, ENTRY_STYLES, EXIT_STYLES, MOSAIC_MODES, MOTION_STYLES, CaptionStyle, Word, block_duration_ms,
@@ -68,23 +68,34 @@ DEFAULTS = {
     "ls_noise": -35, "ls_minsil": 0.10, "ls_res": "1080p Full HD (1920x1080)", "ls_aspect": "16:9 (Horizontal)",
     "ls_fps": 30, "ls_crf": "Alta (CRF 23)",
     "out_dir": "",  # carpeta de salida; vacío = la carpeta output/ de la app
+    "font_custom": "", "clean_meta": True, "prev_size": "Grande",
 }
+PREV_SIZES = {"Pequeña": 420, "Mediana": 560, "Grande": 720}
 OPTIONS = {
     "voice": list(VOICES) + [ROBOT_ENTRY], "r_lang": list(ROBOT_LANGS), "r_variant": list(ROBOT_VARIANTS),
     "src_mode": [SRC_TTS, SRC_UPLOAD], "entry": list(ENTRY_STYLES), "exit": list(EXIT_STYLES),
     "motion": list(MOTION_STYLES), "mosaic": list(MOSAIC_MODES), "res": list(RES_MAP), "aspect": list(ASPECT_MAP),
     "fps": [24, 30, 60], "codec": list(CODECS), "crf": list(CRF_MAP), "ls_res": list(RES_MAP),
-    "ls_aspect": list(ASPECT_MAP), "ls_fps": [24, 30, 60], "ls_crf": list(CRF_MAP),
+    "ls_aspect": list(ASPECT_MAP), "ls_fps": [24, 30, 60], "ls_crf": list(CRF_MAP), "prev_size": list(PREV_SIZES),
 }
 ss = st.session_state
 
 st.markdown(
     """<style>
-    .block-container {padding-top: 2rem; max-width: 1500px;}
-    div[data-testid="stTextArea"] textarea {resize: vertical; min-height: 240px; font-size: 1.05rem; line-height: 1.5;}
-    .stButton > button[kind="secondary"] {background:#111; color:#fff; border:1px solid #111; border-radius:4px; font-weight:500;}
-    .stButton > button[kind="secondary"]:hover {background:#333; border-color:#333; color:#fff;}
-    div[data-testid="stColumn"]:has(.prev-anchor) {position: sticky; top: 3.5rem; align-self: flex-start;}
+    .block-container {padding-top: 1.5rem; max-width: 1560px;}
+    h1 {font-weight: 800; letter-spacing: -0.02em;}
+    h5 {margin-top: .6rem; color: #1d2a6b;}
+    div[data-testid="stTextArea"] textarea {resize: vertical; min-height: 220px; font-size: 1.05rem; line-height: 1.5;}
+    .stButton > button, .stDownloadButton > button {border-radius: 8px; font-weight: 600; transition: all .15s;}
+    .stButton > button[kind="secondary"] {background:#111; color:#fff; border:1px solid #111;}
+    .stButton > button[kind="secondary"]:hover {background:#2b3bd1; border-color:#2b3bd1; color:#fff;}
+    .stButton > button[kind="primary"] {padding: .7rem 1rem; font-size: 1.05rem;}
+    div[data-testid="stExpander"] details {border-radius: 10px;}
+    div[data-testid="stColumn"]:has(.prev-anchor) {position: sticky; top: 3.5rem; align-self: flex-start;
+        background: #f4f6fb; border: 1px solid #e1e5f2; border-radius: 14px; padding: .4rem 1rem 1rem;}
+    div[data-testid="stColumn"]:has(.prev-anchor) img {border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,40,.25);}
+    .tag {display:inline-block; padding:2px 10px; border-radius:999px; font-size:.8rem; margin-right:6px;
+        background:#e8ecff; color:#1d2a6b;}
     </style>""",
     unsafe_allow_html=True,
 )
@@ -290,10 +301,51 @@ def show_result(key: str) -> None:
 # --------------------------------------------------------------------------- #
 # 1 · Guion y voz
 # --------------------------------------------------------------------------- #
-st.title("Subtítulos estilo cartel")
-head_l, head_r = st.columns([5, 1])
-head_l.caption("Video sobre pantalla azul oscura (#00008B) para aplicar Ultra Key en Premiere Pro.")
-head_r.button("Restablecer valores", on_click=reset_settings, use_container_width=True)
+st.title("🎬 Subtítulos estilo cartel")
+st.markdown('<span class="tag">Fondo #00008B para Ultra Key</span><span class="tag">Compatible con Premiere Pro</span>'
+            f'<span class="tag">{"🧹 Metadatos limpios" if ss["clean_meta"] else "Metadatos sin limpiar"}</span>',
+            unsafe_allow_html=True)
+
+
+def clean_existing() -> None:
+    """Limpia un video ya exportado (ExifCleaner integrado), sin recodificar. Guarda una copia «_limpio»."""
+    f = ss.get("clean_up")
+    if f is None:
+        return
+    try:
+        out = unique_path(resolve_out_dir(), Path(f.name).stem + "_limpio", Path(f.name).suffix.lstrip(".") or "mp4")
+        out.write_bytes(f.getvalue())
+        ss["_clean_msg"] = (strip_metadata(out), str(out))
+    except Exception as exc:
+        ss["_clean_msg"] = (False, str(exc))
+
+
+with st.sidebar:
+    st.header("⚙️ Ajustes")
+    st.text_input("Carpeta de salida", key="out_dir", placeholder=f"Vacío = {OUTPUT_DIR}",
+                  help="Aquí se guarda cada archivo generado. Si no existe, se crea. Se recuerda para la próxima vez.")
+    sb1, sb2 = st.columns(2)
+    sb1.button("Examinar…", on_click=browse_out_dir, use_container_width=True)
+    if sb2.button("Abrir", use_container_width=True, key="open_out"):
+        open_folder(resolve_out_dir())
+    if ss.get("_browse_err"):
+        st.warning(ss["_browse_err"])
+    st.caption(f"Se guardará en: {resolve_out_dir(create=False)}")
+    st.divider()
+    st.toggle("🧹 Limpiar metadatos al exportar (ExifCleaner)", key="clean_meta",
+              help="Quita la firma de FFmpeg/x264, fechas, handlers y todo lo que borra ExifCleaner. Sin recodificar.")
+    st.caption("ExifTool: " + ("✅ instalado" if exiftool_path() else
+                               "⚠️ no encontrado (se limpia solo con FFmpeg; vuelve a ejecutar el instalador)"))
+    with st.expander("Limpiar un video que ya tengo"):
+        st.file_uploader("Video", type=["mp4", "mov", "m4v"], key="clean_up")
+        st.button("Limpiar metadatos", on_click=clean_existing, use_container_width=True)
+        if ss.get("_clean_msg"):
+            ok, path = ss["_clean_msg"]
+            (st.success if ok else st.error)(f"{'Limpio' if ok else 'No se pudo limpiar'}: {path}")
+    st.divider()
+    st.selectbox("Tamaño de la previsualización", OPTIONS["prev_size"], key="prev_size")
+    st.button("↺ Restablecer valores", on_click=reset_settings, use_container_width=True)
+    st.caption("La última configuración usada se guarda sola y se restaura al abrir la app.")
 
 txt_file = st.file_uploader("Cargar guion (.txt)", type=["txt"], key="txt_file")
 if txt_file is not None and ss.get("_txt_id") != txt_file.file_id:
@@ -343,15 +395,6 @@ if ss.get("voice_sample"):
 if ss.get("audio_result") and Path(ss["audio_result"]).exists():
     st.audio(ss["audio_result"])
     st.caption(f"Guardado en: {ss['audio_result']}")
-
-o1, o2 = st.columns([6, 1.4], vertical_alignment="bottom")
-o1.text_input("Carpeta de salida de los videos y audios", key="out_dir",
-              placeholder=f"Vacío = {OUTPUT_DIR}  ·  ej.: D:\\Videos\\Reels",
-              help="Aquí se guarda cada archivo generado. Si no existe, se crea. Se recuerda para la próxima vez.")
-o2.button("Examinar…", on_click=browse_out_dir, use_container_width=True)
-if ss.get("_browse_err"):
-    st.warning(ss["_browse_err"])
-st.caption(f"Se guardará en: {resolve_out_dir(create=False)}")
 
 tab_sub, tab_ls = st.tabs(["Subtítulos", "Lip-sync (PNGtuber)"])
 
@@ -498,11 +541,11 @@ with tab_sub:
             t_ms = st.slider("Instante de la animación (ms)", 0, dur, step=20, key="prev_t",
                              help="Arrastra para ver cómo entra, se mueve y sale el subtítulo cuadro a cuadro.")
             pw, ph = target_dims(ss["res"], ss["aspect"])
-            sc = 540 / max(pw, ph)
+            sc = PREV_SIZES[ss["prev_size"]] / max(pw, ph)
             pw, ph = int(pw * sc) // 2 * 2, int(ph * sc) // 2 * 2
             png, log = cached_preview(style_json, words_text, pw, ph, block, t_ms)
             if png:
-                st.image(png, caption="Fondo azul oscuro #00008B")
+                st.image(png, caption=f"Fondo #00008B · bloque {block + 1}/{n_blocks} · {t_ms} ms")
             else:
                 st.error("No se pudo generar la previsualización.")
                 st.code(log[-1500:])
@@ -535,7 +578,7 @@ with tab_sub:
     g1.selectbox("Calidad (solo H.264)", OPTIONS["crf"], key="crf", disabled=not CODECS[ss["codec"]]["uses_crf"])
     g2.checkbox("Incluir el audio en el video", key="inc_audio")
 
-    if st.button("Generar video con subtítulos", use_container_width=True, key="gen_sub"):
+    if st.button("Generar video con subtítulos", use_container_width=True, key="gen_sub", type="primary"):
         ss.pop("result_sub", None)
         text = ss["script"].strip()
         if not text:
@@ -569,7 +612,7 @@ with tab_sub:
                 ok, err = render_captions(
                     words, style_from_state(), width, height, ss["fps"], ss["codec"], CRF_MAP[ss["crf"]],
                     FONTS_DIR, work, work / f"out.{codec['ext']}", audio_path if ss["inc_audio"] else None, total,
-                    progress=lambda f, m: bar.progress(f, text=f"{m}… {int(f * 100)} %"),
+                    progress=lambda f, m: bar.progress(f, text=f"{m}… {int(f * 100)} %"), clean=ss["clean_meta"],
                 )
                 if ok:
                     shutil.move(work / f"out.{codec['ext']}", final)
@@ -608,7 +651,7 @@ with tab_ls:
     r3.selectbox("FPS", OPTIONS["ls_fps"], key="ls_fps")
     r4.selectbox("Calidad", OPTIONS["ls_crf"], key="ls_crf")
 
-    if st.button("Generar video lip-sync", use_container_width=True, key="gen_ls"):
+    if st.button("Generar video lip-sync", use_container_width=True, key="gen_ls", type="primary"):
         ss.pop("result_ls", None)
         text = ss["script"].strip()
         if not (talking and silent) or not (ls_audio or text):
@@ -639,7 +682,7 @@ with tab_ls:
                 ok, err, n_seg = make_lipsync(
                     audio_path, save_imgs(talking, "t"), save_imgs(silent, "s"), work / "out.mp4", work, w, h,
                     ss["ls_fps"], CRF_MAP[ss["ls_crf"]], ss["ls_noise"], ss["ls_minsil"],
-                    progress=lambda f, m: bar.progress(f, text=f"{m}…"),
+                    progress=lambda f, m: bar.progress(f, text=f"{m}…"), clean=ss["clean_meta"],
                 )
                 if ok:
                     shutil.move(work / "out.mp4", final)

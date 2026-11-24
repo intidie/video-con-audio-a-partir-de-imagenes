@@ -63,19 +63,19 @@ MOSAIC_MODES = {
 CODECS: Dict[str, dict] = {
     "H.264 / MP4 (ligero, compatible con Premiere)": {
         "ext": "mp4", "chunk": "mkv",
-        "vargs": ["-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast"],
-        "pix": "yuv420p", "audio": ["-c:a", "aac", "-b:a", "192k"],
-        "extra": ["-movflags", "+faststart"], "uses_crf": True,
+        "vargs": ["-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-tune", "animation"],
+        "pix": "yuv420p", "audio": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"],
+        "extra": ["-movflags", "+faststart", "-tag:v", "avc1"], "uses_crf": True, "gop": True,
     },
     "ProRes 422 HQ / MOV (mejor para Ultra Key, pesado)": {
         "ext": "mov", "chunk": "mov",
         "vargs": ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0"],
-        "pix": "yuv422p10le", "audio": ["-c:a", "pcm_s16le"], "extra": [], "uses_crf": False,
+        "pix": "yuv422p10le", "audio": ["-c:a", "pcm_s16le", "-ar", "48000"], "extra": [], "uses_crf": False,
     },
     "DNxHR HQ / MOV (alternativa a ProRes)": {
         "ext": "mov", "chunk": "mov",
         "vargs": ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq"],
-        "pix": "yuv422p", "audio": ["-c:a", "pcm_s16le"], "extra": [], "uses_crf": False,
+        "pix": "yuv422p", "audio": ["-c:a", "pcm_s16le", "-ar", "48000"], "extra": [], "uses_crf": False,
     },
 }
 
@@ -779,7 +779,7 @@ def default_workers() -> int:
 def render_captions(
     words: Sequence[Word], style: CaptionStyle, width: int, height: int, fps: int, codec_label: str, crf: int,
     fonts_dir: Path, work_dir: Path, out_path: Path, audio: Optional[Path], total: float,
-    workers: Optional[int] = None, progress: Optional[Callable[[float, str], None]] = None,
+    workers: Optional[int] = None, progress: Optional[Callable[[float, str], None]] = None, clean: bool = True,
 ) -> Tuple[bool, str]:
     """Renderiza el video por trozos en paralelo y los une sin recodificar. Devuelve (ok, log de error)."""
     c = CODECS[codec_label]
@@ -797,6 +797,8 @@ def render_captions(
             "-f", "lavfi", "-i", f"color=c={CHROMA_BG}:s={width}x{height}:r={fps}",
             "-vf", make_vf(width, height, c["pix"], fonts_dir, cap, style, s / fps),
             "-frames:v", str(e - s), *c["vargs"], *(["-crf", str(crf)] if c["uses_crf"] else []),
+            # GOP corto y cerrado: Premiere navega (scrub) fluido y los trozos se unen sin saltos.
+            *(["-g", str(fps), "-keyint_min", str(fps), "-sc_threshold", "0"] if c.get("gop") else []),
             "-threads", str(threads), *tags, "-an", f"c{i}.{c['chunk']}",
         ]
         procs.append(_popen(cmd, work_dir, work_dir / f"e{i}.log"))
@@ -816,7 +818,7 @@ def render_captions(
     cmd += [*BITEXACT_FLAGS, "-map_metadata", "-1", "-t", f"{total:.3f}", str(out_path)]
     r = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
     ok = r.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
-    if ok:
+    if ok and clean:
         if progress:
             progress(0.98, "Limpiando metadatos")
         strip_metadata(out_path)          # sin recodificar: quita encoder, handlers y el SEI de x264
@@ -876,9 +878,10 @@ def render_preview_png(
         cap = write_assets(words, style, width, height, total, fonts_dir, d)
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "verbose", "-y",
-            "-f", "lavfi", "-i", f"color=c={CHROMA_BG}:s={width}x{height}:r=25:d={t + 0.1:.2f}",
-            "-vf", make_vf(width, height, "yuv420p", fonts_dir, cap, style),
-            "-ss", f"{t:.2f}", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-",
+            "-f", "lavfi", "-i", f"color=c={CHROMA_BG}:s={width}x{height}:r=25",
+            # Se salta directo al instante t (setpts) en vez de dibujar todos los cuadros anteriores: más rápido.
+            "-vf", make_vf(width, height, "yuv420p", fonts_dir, cap, style, t),
+            "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-compression_level", "1", "-",
         ]
         r = subprocess.run(cmd, cwd=d, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     log = r.stderr.decode("utf-8", "replace")
